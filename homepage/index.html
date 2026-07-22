@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NOVA · 次世代数字生命体</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <!-- 背景光晕 -->
+    <div class="bg-glow bg-glow-1"></div>
+    <div class="bg-glow bg-glow-2"></div>
+    <div class="bg-grid"></div>
+
+    <!-- 顶部导航 -->
+    <header class="nav">
+        <div class="nav-logo">
+            <span class="logo-mark"></span>
+            <div class="logo-text">
+                <strong>NOVA</strong>
+                <em>数字生命 · 情感交互引擎</em>
+            </div>
+        </div>
+        <nav class="nav-links">
+            <a href="#" class="active">首页</a>
+            <a href="#features">核心能力</a>
+            <a href="#scenes">应用场景</a>
+            <a href="#about">关于我们</a>
+        </nav>
+        <div class="nav-actions" id="navActions">
+            <a class="btn-ghost" href="#" id="loginBtn">登录</a>
+            <a class="btn-primary js-start-chat" href="#">开启对话</a>
+
+            <!-- 登录后显示：头像按钮 + 下拉菜单（默认隐藏，由 JS 控制显示） -->
+            <div class="user-menu" id="userMenu" hidden>
+                <button class="user-avatar-btn" id="userAvatarBtn" type="button" aria-haspopup="true" aria-expanded="false">
+                    <img id="userAvatarImg" src="nova-hero.jpg" alt="头像">
+                </button>
+                <div class="user-dropdown" id="userDropdown" hidden>
+                    <div class="ud-head">
+                        <img class="ud-avatar" id="udAvatar" src="nova-hero.jpg" alt="">
+                        <div class="ud-meta">
+                            <span class="ud-name" id="udName">用户名</span>
+                            <span class="ud-sub">已登录</span>
+                        </div>
+                    </div>
+                    <button class="ud-item" data-act="switch">
+                        <span class="ud-ic">⇄</span> 切换用户
+                    </button>
+                    <button class="ud-item" data-act="avatar">
+                        <span class="ud-ic">🖼</span> 更换头像
+                    </button>
+                    <button class="ud-item" data-act="password">
+                        <span class="ud-ic">🔒</span> 修改密码
+                    </button>
+                    <button class="ud-item danger" data-act="delete">
+                        <span class="ud-ic">⏻</span> 注销账号
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- 主视觉 -->
+    <main class="hero">
+        <!-- 左侧文案 -->
+        <section class="hero-text">
+            <span class="badge">AI DIGITAL HUMAN</span>
+            <h1 class="hero-title">NOVA</h1>
+            <p class="hero-sub">次世代数字生命体</p>
+            <p class="hero-desc">
+                融合情感计算、多模态感知与实时语音合成，
+                为你打造有温度、懂情绪、可陪伴的 AI 数字人。
+                它不只是回答问题，更在与你交互中不断生长。
+            </p>
+
+            <div class="tag-row">
+                <span class="tag">情感计算引擎</span>
+                <span class="tag">多模态交互</span>
+                <span class="tag">个性化人格</span>
+                <span class="tag">实时语音合成</span>
+            </div>
+
+            <div class="hero-cta">
+                <a class="btn-primary lg js-start-chat" href="#">
+                    立即开启对话
+                    <span class="cta-arrow">→</span>
+                </a>
+            </div>
+
+            <div class="stat-row">
+                <div class="stat">
+                    <strong>24/7</strong>
+                    <em>在线服务</em>
+                </div>
+                <div class="stat">
+                    <strong>1.2M+</strong>
+                    <em>交互轮次</em>
+                </div>
+                <div class="stat">
+                    <strong>98%</strong>
+                    <em>用户满意度</em>
+                </div>
+            </div>
+        </section>
+
+        <!-- 右侧数字人展示 -->
+        <section class="hero-show">
+            <div class="show-card">
+                <div class="show-glow"></div>
+
+                <!-- NOVA 数字人形象 -->
+                <img id="avatar" class="hero-avatar" src="nova-bot.jpg" alt="NOVA 数字人">
+
+                <!-- 浮动标签 -->
+                <div class="float-label l1">情感识别 <span>✓</span></div>
+                <div class="float-label l2">多模态 <span>✓</span></div>
+                <div class="float-label l3">实时响应 <span>✓</span></div>
+            </div>
+        </section>
+    </main>
+
+    <!-- 更换头像弹窗 -->
+    <div class="modal-mask" id="avatarModal" hidden>
+        <div class="modal-card">
+            <button class="modal-close" data-close type="button" aria-label="关闭">×</button>
+            <h3 class="modal-title">更换头像</h3>
+            <div class="avatar-preview">
+                <img id="avatarPreview" src="nova-hero.jpg" alt="预览">
+            </div>
+            <label class="field">
+                <span class="field-label">密码验证</span>
+                <input type="password" id="avatarPwd" placeholder="请输入密码以验证身份" autocomplete="current-password">
+                <span class="field-err" id="avatarPwdErr"></span>
+            </label>
+            <label class="file-picker">
+                <input type="file" id="avatarInput" accept="image/jpeg,image/png,image/gif,image/webp">
+                <span>选择图片（jpg / png / gif / webp，≤ 3MB）</span>
+            </label>
+            <p class="modal-err" id="avatarErr"></p>
+            <div class="modal-actions">
+                <button class="btn-ghost" data-close type="button">取消</button>
+                <button class="btn-primary" id="avatarSave" type="button">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 修改密码弹窗 -->
+    <div class="modal-mask" id="pwdModal" hidden>
+        <div class="modal-card">
+            <button class="modal-close" data-close type="button" aria-label="关闭">×</button>
+            <h3 class="modal-title">修改密码</h3>
+            <label class="field">
+                <span class="field-label">当前密码</span>
+                <input type="password" id="pwdOld" autocomplete="current-password">
+                <span class="field-err" id="pwdOldErr"></span>
+            </label>
+            <label class="field">
+                <span class="field-label">新密码</span>
+                <input type="password" id="pwdNew" placeholder="至少 8 位，含字母与数字" autocomplete="new-password">
+                <span class="field-err" id="pwdNewErr"></span>
+            </label>
+            <label class="field">
+                <span class="field-label">确认新密码</span>
+                <input type="password" id="pwdNew2" autocomplete="new-password">
+                <span class="field-err" id="pwdNew2Err"></span>
+            </label>
+            <p class="modal-err" id="pwdErr"></p>
+            <div class="modal-actions">
+                <button class="btn-ghost" data-close type="button">取消</button>
+                <button class="btn-primary" id="pwdSave" type="button">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 注销账号弹窗 -->
+    <div class="modal-mask" id="delModal" hidden>
+        <div class="modal-card">
+            <button class="modal-close" data-close type="button" aria-label="关闭">×</button>
+            <h3 class="modal-title danger">注销账号</h3>
+            <p class="modal-desc">此操作将永久删除你的账号与全部数据，且不可恢复。请输入密码确认。</p>
+            <label class="field">
+                <span class="field-label">密码</span>
+                <input type="password" id="delPwd" autocomplete="current-password">
+                <span class="field-err" id="delErr"></span>
+            </label>
+            <div class="modal-actions">
+                <button class="btn-ghost" data-close type="button">取消</button>
+                <button class="btn-primary danger" id="delConfirm" type="button">确认注销</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="toast">操作成功</div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>

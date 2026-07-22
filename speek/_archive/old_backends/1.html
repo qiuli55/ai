@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+
+    <title>AI数字人助手</title>
+
+    <link rel="stylesheet" href="style.css">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+</head>
+
+<body>
+
+    <div class="bg-light"></div>
+
+    <div class="bg-circle circle1"></div>
+    <div class="bg-circle circle2"></div>
+    <div class="bg-circle circle3"></div>
+
+
+    <!-- =================== Header =================== -->
+
+    <header class="topbar">
+
+        <div class="logo">
+
+            <div class="logo-icon">
+                AI
+            </div>
+
+            <div class="logo-text">
+
+                <h2>Digital Human</h2>
+
+                <span>智能数字人平台</span>
+
+            </div>
+
+        </div>
+
+
+        <nav class="menu">
+
+            <a href="#">首页</a>
+
+            <a href="#">产品</a>
+
+            <a href="#">知识库</a>
+
+            <a href="#">解决方案</a>
+
+            <a href="#">联系我们</a>
+
+        </nav>
+
+
+        <div class="user-panel">
+
+            <button class="btn-login">
+
+                登录
+
+            </button>
+
+        </div>
+
+    </header>
+
+
+    <!-- ==================== Main ===================== -->
+
+    <main class="dashboard">
+
+
+        <!-- 左侧 -->
+
+        <section class="left-panel">
+
+            <!-- 设备状态 -->
+
+            <div class="glass-card status-card">
+
+                <div class="card-title">
+
+                    设备状态
+
+                </div>
+
+                <div class="status-number">
+
+                    260
+
+                </div>
+
+                <div class="status-desc">
+
+                    当前在线设备
+
+                </div>
+
+                <div class="progress">
+
+                    <div class="progress-inner"></div>
+
+                </div>
+
+                <div class="progress-text">
+
+                    在线率 98%
+
+                </div>
+
+            </div>
+
+
+            <!-- CPU -->
+
+            <div class="glass-card">
+
+                <div class="mini-title">
+
+                    CPU
+
+                </div>
+
+                <div class="mini-value">
+
+                    35%
+
+                </div>
+
+            </div>
+
+
+            <!-- Memory -->
+
+            <div class="glass-card">
+
+                <div class="mini-title">
+
+                    内存
+
+                </div>
+
+                <div class="mini-value">
+
+                    62%
+
+                </div>
+
+            </div>
+
+
+            <!-- 趋势图 -->
+
+            <div class="glass-card chart-card">
+
+                <div class="card-title">
+
+                    今日数据
+
+                </div>
+
+                <canvas id="trendChart"></canvas>
+
+            </div>
+
+        </section>
+
+
+
+        <!-- ================= 数字人 ================= -->
+
+        <section class="center-panel">
+
+            <div class="avatar-glow"></div>
+
+            <div class="avatar-ring ring1"></div>
+
+            <div class="avatar-ring ring2"></div>
+
+            <div class="avatar-ring ring3"></div>
+
+
+            <div class="avatar-box">
+
+                <img id="avatar" src="avatar.png" alt="数字人">
+
+            </div>
+
+
+            <div class="avatar-name">
+
+                AI数字人助手
+
+            </div>
+
+            <div class="avatar-status">
+
+                ● 在线
+
+            </div>
+
+            <div class="voice-wave">
+
+                <span></span>
+
+                <span></span>
+
+                <span></span>
+
+                <span></span>
+
+                <span></span>
+
+            </div>
+
+        </section>
+        <!DOCTYPE html>
+        <html lang="zh-CN">
+
+        <head>
+
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width,initial-scale=1.0">
+
+            <title>AI数字人助手</title>
+
+            <link rel="stylesheet" href="/static/css/style.css">
+
+            <link rel="preconnect" href="https://fonts.googleapis.com">
+
+            <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+                rel="stylesheet">
+
+        </head>
+
+        <body>
+
+            <div class="bg-light"></div>
+
+            <div class="bg-circle circle1"></div>
+            <div class="bg-circle circle2"></div>
+            <div class="bg-circle circle3"></div>
+
+
+            <!-- =================== Header =================== -->
+
+            <header class="topbar">
+
+                <div class="logo">
+
+                    <div class="logo-icon">
+                        AI
+                    </div>
+
+                    <div class="logo-text">
+
+                        <h2>Digital Human</h2>
+
+                        <span>智能数字人平台</span>
+
+                    </div>
+
+                </div>
+
+
+                <nav class="menu">
+
+                    <a href="#">首页</a>
+
+                    <a href="#">产品</a>
+
+                    <a href="#">知识库</a>
+
+                    <a href="#">解决方案</a>
+
+                    <a href="#">联系我们</a>
+
+                </nav>
+
+
+                <div class="user-panel">
+
+                    <button class="btn-login">
+
+                        登录
+
+                    </button>
+
+                </div>
+
+            </header>
+
+
+            <!-- ==================== Main ===================== -->
+
+            <main class="dashboard">
+
+
+                <!-- 左侧 -->
+
+                <section class="left-panel">
+
+                    <!-- 设备状态 -->
+
+                    <div class="glass-card status-card">
+
+                        <div class="card-title">
+
+                            设备状态
+
+                        </div>
+
+                        <div class="status-number">
+
+                            260
+
+                        </div>
+
+                        <div class="status-desc">
+
+                            当前在线设备
+
+                        </div>
+
+                        <div class="progress">
+
+                            <div class="progress-inner"></div>
+
+                        </div>
+
+                        <div class="progress-text">
+
+                            在线率 98%
+
+                        </div>
+
+                    </div>
+
+
+                    <!-- CPU -->
+
+                    <div class="glass-card">
+
+                        <div class="mini-title">
+
+                            CPU
+
+                        </div>
+
+                        <div class="mini-value">
+
+                            35%
+
+                        </div>
+
+                    </div>
+
+
+                    <!-- Memory -->
+
+                    <div class="glass-card">
+
+                        <div class="mini-title">
+
+                            内存
+
+                        </div>
+
+                        <div class="mini-value">
+
+                            62%
+
+                        </div>
+
+                    </div>
+
+
+                    <!-- 趋势图 -->
+
+                    <div class="glass-card chart-card">
+
+                        <div class="card-title">
+
+                            今日数据
+
+                        </div>
+
+                        <canvas id="trendChart"></canvas>
+
+                    </div>
+
+                </section>
+
+
+
+                <!-- ================= 数字人 ================= -->
+
+                <section class="center-panel">
+
+                    <div class="avatar-glow"></div>
+
+                    <div class="avatar-ring ring1"></div>
+
+                    <div class="avatar-ring ring2"></div>
+
+                    <div class="avatar-ring ring3"></div>
+
+
+                    <div class="avatar-box">
+
+                        <img id="avatar" src="/static/images/avatar.png" alt="数字人">
+
+                    </div>
+
+
+                    <div class="avatar-name">
+
+                        AI数字人助手
+
+                    </div>
+
+                    <div class="avatar-status">
+
+                        ● 在线
+
+                    </div>
+
+                    <div class="voice-wave">
+
+                        <span></span>
+
+                        <span></span>
+
+                        <span></span>
+
+                        <span></span>
+
+                        <span></span>
+
+                    </div>
+
+                </section>
+                <!-- ================= 右侧 ================= -->
+
+                <section class="right-panel">
+
+                    <!-- AI状态 -->
+
+                    <div class="glass-card ai-card">
+
+                        <div class="card-title">
+
+                            AI状态
+
+                        </div>
+
+                        <div class="ai-item">
+
+                            <span>推理状态</span>
+
+                            <strong class="online">正常</strong>
+
+                        </div>
+
+                        <div class="ai-item">
+
+                            <span>语音模型</span>
+
+                            <strong>GPT-SoVITS</strong>
+
+                        </div>
+
+                        <div class="ai-item">
+
+                            <span>大模型</span>
+
+                            <strong>Doubao</strong>
+
+                        </div>
+
+                        <div class="ai-item">
+
+                            <span>网络延迟</span>
+
+                            <strong>28 ms</strong>
+
+                        </div>
+
+                    </div>
+
+
+
+                    <!-- 最近通知 -->
+
+                    <div class="glass-card notice-card">
+
+                        <div class="card-title">
+
+                            最近通知
+
+                        </div>
+
+                        <ul class="notice-list">
+
+                            <li>✔ 数字人已上线</li>
+
+                            <li>✔ TTS 服务正常</li>
+
+                            <li>✔ Chat API 已连接</li>
+
+                            <li>✔ 知识库加载完成</li>
+
+                        </ul>
+
+                    </div>
+
+
+
+                    <!-- AI能力 -->
+
+                    <div class="glass-card">
+
+                        <div class="card-title">
+
+                            AI能力
+
+                        </div>
+
+                        <div class="skill-list">
+
+                            <span class="skill">聊天</span>
+
+                            <span class="skill">语音</span>
+
+                            <span class="skill">画图</span>
+
+                            <span class="skill">搜索</span>
+
+                            <span class="skill">代码</span>
+
+                            <span class="skill">知识库</span>
+
+                        </div>
+
+                    </div>
+
+                </section>
+
+            </main>
+
+
+            <!-- ===================== 输入区域 ===================== -->
+
+            <div class="input-wrapper">
+
+                <div class="chat-input">
+
+                    <button class="tool-btn">
+
+                        📎
+
+                    </button>
+
+                    <textarea id="msg" placeholder="请输入内容..."></textarea>
+
+                    <button class="tool-btn">
+
+                        🎤
+
+                    </button>
+
+                    <button id="sendBtn" class="send-btn">
+
+                        发送
+
+                    </button>
+
+                </div>
+
+            </div>
+
+
+            <!-- ===================== 聊天窗口 ===================== -->
+
+            <div class="chat-panel" id="chatPanel">
+
+                <div class="chat-header">
+
+                    <div>
+
+                        AI聊天
+
+                    </div>
+
+                    <button id="closeChat">
+
+                        ×
+
+                    </button>
+
+                </div>
+
+                <div class="chat-body" id="chatbox">
+
+                </div>
+
+            </div>
+
+
+            <!-- 悬浮聊天按钮 -->
+
+            <button id="openChat" class="chat-float">
+
+                💬
+
+            </button>
+            <!-- ===================== 背景粒子 ===================== -->
+
+            <div id="particles"></div>
+
+            <!-- ===================== Toast ===================== -->
+
+            <div id="toast" class="toast">
+                操作成功
+            </div>
+
+            <!-- ===================== Loading ===================== -->
+
+            <div id="loading" class="loading-mask">
+
+                <div class="loader">
+
+                    <div class="loader-ring"></div>
+
+                    <div class="loader-text">
+
+                        AI 正在思考...
+
+                    </div>
+
+                </div>
+
+            </div>
+
+            <!-- ===================== Chart ===================== -->
+
+            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+            <!-- ===================== JS ===================== -->
+
+            <script src="app.js"></script>
+
+            <script>
+
+                window.addEventListener("load", function () {
+
+                    const loading = document.getElementById("loading");
+
+                    setTimeout(() => {
+
+                        loading.classList.add("hide");
+
+                    }, 800);
+
+                });
+
+            </script>
+
+        </body>
+
+        </html>
