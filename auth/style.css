@@ -1,0 +1,529 @@
+/* ============ NOVA 登录 / 注册 ============ */
+:root {
+    --bg: #060912;
+    --bg-2: #0a1024;
+    --cyan: #22d3ee;
+    --purple: #a855f7;
+    --pink: #ff5d8f;
+    --text: #e8edff;
+    --text-dim: #8a93b8;
+    --card: rgba(255, 255, 255, 0.04);
+    --card-border: rgba(120, 160, 255, 0.16);
+    --input-bg: rgba(10, 16, 36, 0.6);
+    --danger: #ff6b81;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+    background: radial-gradient(1200px 800px at 70% -10%, #0c1430 0%, var(--bg) 60%);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+    position: relative;
+}
+
+/* 背景光晕 + 网格 */
+.bg-glow {
+    position: fixed;
+    border-radius: 50%;
+    filter: blur(120px);
+    opacity: .5;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.bg-glow-1 {
+    width: 620px;
+    height: 620px;
+    top: -180px;
+    left: -120px;
+    background: radial-gradient(circle, rgba(168, 85, 247, .55), transparent 70%);
+}
+
+.bg-glow-2 {
+    width: 560px;
+    height: 560px;
+    bottom: -200px;
+    right: -120px;
+    background: radial-gradient(circle, rgba(34, 211, 238, .5), transparent 70%);
+}
+
+.bg-grid {
+    position: fixed;
+    inset: 0;
+    background-image:
+        linear-gradient(rgba(120, 160, 255, .05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(120, 160, 255, .05) 1px, transparent 1px);
+    background-size: 46px 46px;
+    mask-image: radial-gradient(circle at 50% 40%, #000 30%, transparent 80%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* 视图切换 */
+.view {
+    position: relative;
+    z-index: 1;
+    min-height: 100vh;
+    display: none;
+}
+
+.view.active {
+    display: flex;
+}
+
+/* ===== 登录视图：左右分栏 ===== */
+.view-login .split {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1.05fr 1fr;
+    min-height: 100vh;
+}
+
+.split-left {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+    background:
+        radial-gradient(600px 400px at 30% 30%, rgba(168, 85, 247, .12), transparent 70%),
+        radial-gradient(500px 500px at 70% 70%, rgba(34, 211, 238, .1), transparent 70%);
+    border-right: 1px solid var(--card-border);
+}
+
+.show-card {
+    position: relative;
+    width: min(86%, 420px);
+    aspect-ratio: 3 / 4;
+    border-radius: 24px;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    box-shadow: 0 30px 80px rgba(0, 0, 0, .45), inset 0 0 60px rgba(120, 160, 255, .06);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.show-glow {
+    position: absolute;
+    inset: -30%;
+    background: conic-gradient(from 0deg, rgba(34, 211, 238, .35), rgba(168, 85, 247, .35), rgba(255, 93, 143, .3), rgba(34, 211, 238, .35));
+    filter: blur(70px);
+    opacity: .45;
+    animation: spin 14s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.hero-avatar {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 24px;
+}
+
+.float-label {
+    position: absolute;
+    padding: 7px 12px;
+    font-size: 13px;
+    color: var(--text);
+    background: rgba(10, 16, 36, .7);
+    border: 1px solid var(--card-border);
+    border-radius: 999px;
+    backdrop-filter: blur(6px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+    white-space: nowrap;
+}
+
+.float-label span {
+    color: var(--cyan);
+    margin-left: 4px;
+}
+
+.l1 {
+    top: 14%;
+    left: -6%;
+    animation: floatY 5s ease-in-out infinite;
+}
+
+.l2 {
+    top: 46%;
+    right: -8%;
+    animation: floatY 5s ease-in-out infinite .8s;
+}
+
+.l3 {
+    bottom: 12%;
+    left: -4%;
+    animation: floatY 5s ease-in-out infinite 1.6s;
+}
+
+@keyframes floatY {
+    0%, 100% {
+        transform: translateY(0);
+    }
+
+    50% {
+        transform: translateY(-12px);
+    }
+}
+
+.left-slogan {
+    margin-top: 26px;
+    text-align: center;
+}
+
+.left-slogan strong {
+    display: block;
+    font-size: 26px;
+    letter-spacing: 6px;
+    background: linear-gradient(90deg, var(--cyan), var(--purple));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+.left-slogan em {
+    font-style: normal;
+    color: var(--text-dim);
+    font-size: 13px;
+    letter-spacing: 2px;
+}
+
+.split-right {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 40px;
+    position: relative;
+}
+
+.brand {
+    position: absolute;
+    top: 30px;
+    left: 36px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.brand-name {
+    font-weight: 700;
+    letter-spacing: 3px;
+    font-size: 18px;
+}
+
+.logo-mark {
+    width: 22px;
+    height: 22px;
+    border-radius: 7px;
+    background: linear-gradient(135deg, var(--cyan), var(--purple));
+    box-shadow: 0 0 18px rgba(34, 211, 238, .6);
+}
+
+/* 表单卡片 */
+.form-card {
+    width: 100%;
+    max-width: 380px;
+}
+
+.form-title {
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+    background: linear-gradient(90deg, #fff, var(--cyan));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+.form-hint {
+    color: var(--text-dim);
+    font-size: 14px;
+    margin-bottom: 26px;
+}
+
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.field {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+
+/* 输入框 hover / 聚焦时的渐变光晕（独立伪元素层，绝不影响输入框尺寸） */
+.field::after {
+    content: "";
+    position: absolute;
+    left: -2px;
+    right: -2px;
+    top: 23px;            /* 略扩，让光晕溢出输入框四边 */
+    height: 50px;
+    border-radius: 14px;
+    background: linear-gradient(120deg, rgba(34, 211, 238, .9), rgba(168, 85, 247, .9));
+    filter: blur(16px);
+    opacity: 0;
+    transition: opacity .25s ease;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.field:hover::after,
+.field:focus-within::after {
+    opacity: 1;
+}
+
+.field-label {
+    position: relative;
+    z-index: 2;
+    font-size: 13px;
+    color: var(--text-dim);
+    letter-spacing: .5px;
+}
+
+.field input {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    height: 46px;
+    padding: 0 15px;
+    background: #fff;
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    color: #000;
+    font-size: 14px;
+    transition: border-color .2s, box-shadow .2s;
+    outline: none;
+}
+
+.field input::placeholder {
+    color: rgba(138, 147, 184, .6);
+}
+
+.field input:focus {
+    border-color: var(--cyan);
+    box-shadow: 0 0 0 3px rgba(34, 211, 238, .15);
+}
+
+.field.invalid input {
+    border-color: var(--danger);
+    box-shadow: 0 0 0 3px rgba(255, 107, 129, .15);
+}
+
+.field-err {
+    font-size: 12px;
+    color: var(--danger);
+    min-height: 14px;
+    display: none;
+}
+
+.field.invalid .field-err {
+    display: block;
+}
+
+.row-between {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-top: -4px;
+}
+
+.remember {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    cursor: pointer;
+}
+
+.remember input,
+.link-mini {
+    accent-color: var(--cyan);
+}
+
+.link-mini {
+    color: var(--cyan);
+    text-decoration: none;
+}
+
+.link-mini:hover {
+    text-decoration: underline;
+}
+
+.btn-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 48px;
+    padding: 0 22px;
+    border: none;
+    border-radius: 12px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #04121a;
+    background: linear-gradient(135deg, var(--cyan), var(--purple));
+    cursor: pointer;
+    transition: transform .15s, box-shadow .2s, opacity .2s;
+    box-shadow: 0 10px 30px rgba(34, 211, 238, .25);
+}
+
+.btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 14px 38px rgba(168, 85, 247, .35);
+}
+
+.btn-primary:active {
+    transform: translateY(0);
+}
+
+.btn-primary.block {
+    width: 100%;
+    margin-top: 6px;
+}
+
+.switch-line {
+    margin-top: 22px;
+    text-align: center;
+    font-size: 14px;
+    color: var(--text-dim);
+}
+
+.switch-line a {
+    color: var(--cyan);
+    text-decoration: none;
+    font-weight: 600;
+    margin-left: 4px;
+}
+
+.switch-line a:hover {
+    text-decoration: underline;
+}
+
+/* ===== 注册视图：居中占满中央，无左侧数字人 ===== */
+.view-register {
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+}
+
+.brand-center {
+    position: static;
+    margin-bottom: 22px;
+    justify-content: center;
+}
+
+.register-card {
+    max-width: 440px;
+    padding: 38px 40px;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 22px;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 30px 80px rgba(0, 0, 0, .45);
+}
+
+/* Toast */
+.toast {
+    position: fixed;
+    left: 50%;
+    bottom: 40px;
+    transform: translateX(-50%) translateY(20px);
+    padding: 12px 22px;
+    background: rgba(10, 16, 36, .92);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    color: var(--text);
+    font-size: 14px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .25s, transform .25s;
+    z-index: 50;
+}
+
+.toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+/* ===== 响应式 ===== */
+@media (max-width: 880px) {
+    .view-login .split {
+        grid-template-columns: 1fr;
+    }
+
+    .split-left {
+        display: none;
+    }
+
+    .split-right {
+        padding: 72px 24px 40px;
+    }
+
+    .brand {
+        top: 20px;
+        left: 20px;
+    }
+}
+
+@media (max-width: 480px) {
+    .register-card {
+        margin: 0 18px;
+        padding: 30px 22px;
+    }
+
+    .form-title {
+        font-size: 27px;
+    }
+}
+
+/* 密码小眼睛 */
+.pwd-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+.pwd-wrap input {
+    flex: 1;
+    padding-right: 40px !important;
+}
+.pwd-eye {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    border: none;
+    background: none;
+    cursor: pointer;
+    padding: 4px;
+    opacity: .45;
+    transition: opacity .2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+    color: #000;
+}
+.pwd-eye:hover { opacity: 1; }
