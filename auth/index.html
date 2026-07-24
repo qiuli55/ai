@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NOVA · 登录 / 注册</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <!-- 背景光晕 -->
+    <div class="bg-glow bg-glow-1"></div>
+    <div class="bg-glow bg-glow-2"></div>
+    <div class="bg-grid"></div>
+
+    <!-- 登录视图 -->
+    <section class="view view-login active" id="viewLogin">
+        <div class="split">
+            <!-- 左侧：数字人展示 -->
+            <div class="split-left">
+                <div class="show-card">
+                    <div class="show-glow"></div>
+                    <img class="hero-avatar" src="nova-bot.jpg" alt="NOVA 数字人">
+                </div>
+                <div class="left-slogan">
+                    <strong>NOVA</strong>
+                    <em>次世代数字生命体</em>
+                </div>
+            </div>
+
+            <!-- 右侧：登录表单 -->
+            <div class="split-right">
+                <div class="brand">
+                    <span class="logo-mark"></span>
+                    <span class="brand-name">NOVA</span>
+                </div>
+
+                <div class="form-card">
+                    <!-- 标题旁不再有「注册」切换 -->
+                    <h1 class="form-title">登录</h1>
+                    <p class="form-hint">欢迎回来，与你的数字人继续对话</p>
+
+                    <form id="loginForm" class="auth-form" novalidate>
+                        <label class="field">
+                            <span class="field-label">账号</span>
+                            <input type="text" name="account" placeholder="手机号 / 邮箱 / 用户名" autocomplete="username">
+                            <span class="field-err"></span>
+                        </label>
+
+                        <label class="field">
+                            <span class="field-label">密码</span>
+                            <input type="password" name="password" placeholder="请输入密码" autocomplete="current-password">
+                            <span class="field-err"></span>
+                        </label>
+
+                        <div class="row-between">
+                            <label class="remember">
+                                <input type="checkbox" name="remember"> 记住我
+                            </label>
+                            <a href="#" class="link-mini" id="toForgot">忘记密码？</a>
+                        </div>
+
+                        <button type="submit" class="btn-primary block">登录</button>
+                    </form>
+
+                    <!-- 注册入口移到表单下方 -->
+                    <p class="switch-line">还没有账号？<a href="#" id="toRegister">立即注册</a></p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 注册视图（无左侧数字人，框居中占满中央） -->
+    <section class="view view-register" id="viewRegister">
+        <div class="brand brand-center">
+            <span class="logo-mark"></span>
+            <span class="brand-name">NOVA</span>
+        </div>
+
+        <div class="form-card register-card">
+            <h1 class="form-title">创建账号</h1>
+            <p class="form-hint">只需一步，开启你的数字人陪伴之旅</p>
+
+            <form id="registerForm" class="auth-form" novalidate>
+                <label class="field">
+                    <span class="field-label">用户名</span>
+                    <input type="text" name="username" placeholder="仅英文 / 数字，用于登录">
+                    <span class="field-err"></span>
+                </label>
+
+                <label class="field">
+                    <span class="field-label">手机号</span>
+                    <input type="tel" name="phone" placeholder="11 位手机号，用于账号安全" maxlength="11">
+                    <span class="field-err"></span>
+                </label>
+
+                <label class="field">
+                    <span class="field-label">邮箱</span>
+                    <input type="email" name="email" placeholder="用于接收验证与找回密码">
+                    <span class="field-err"></span>
+                </label>
+
+                <label class="field">
+                    <span class="field-label">密码</span>
+                    <input type="password" name="password" placeholder="至少 8 位，含字母与数字">
+                    <span class="field-err"></span>
+                </label>
+
+                <label class="field">
+                    <span class="field-label">确认密码</span>
+                    <input type="password" name="confirm" placeholder="再次输入密码">
+                    <span class="field-err"></span>
+                </label>
+
+                <button type="submit" class="btn-primary block">注册并开启对话</button>
+            </form>
+
+            <p class="switch-line">已有账号？<a href="#" id="toLogin">去登录</a></p>
+        </div>
+    </section>
+
+    <!-- 忘记密码视图（居中卡片，同页切换，不跳转） -->
+    <section class="view view-register" id="viewForgot">
+        <div class="brand brand-center">
+            <span class="logo-mark"></span>
+            <span class="brand-name">NOVA</span>
+        </div>
+
+        <div class="form-card register-card">
+            <h1 class="form-title">找回密码</h1>
+            <p class="form-hint">验证账号与注册邮箱，即可设置新密码</p>
+
+            <form id="forgotForm" class="auth-form" novalidate>
+                <label class="field">
+                    <span class="field-label">账号</span>
+                    <input type="text" name="account" placeholder="手机号 / 邮箱 / 用户名">
+                    <span class="field-err"></span>
+                </label>
+
+                <label class="field">
+                    <span class="field-label">注册邮箱</span>
+                    <input type="email" name="email" placeholder="注册时填写的邮箱">
+                    <span class="field-err"></span>
+                </label>
+
+                <label class="field">
+                    <span class="field-label">新密码</span>
+                    <input type="password" name="new_password" placeholder="至少 8 位，含字母与数字">
+                    <span class="field-err"></span>
+                </label>
+
+                <label class="field">
+                    <span class="field-label">确认新密码</span>
+                    <input type="password" name="confirm_password" placeholder="再次输入新密码">
+                    <span class="field-err"></span>
+                </label>
+
+                <button type="submit" class="btn-primary block">重置密码</button>
+            </form>
+
+            <p class="switch-line">想起来了？<a href="#" id="toLoginFromForgot">返回登录</a></p>
+        </div>
+    </section>
+
+    <!-- Toast -->
+    <div id="toast" class="toast">操作成功</div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>
