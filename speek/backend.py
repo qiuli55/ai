@@ -8,7 +8,7 @@ import bcrypt
 import threading
 import shutil
 import requests
-from flask import Flask, request, jsonify, send_from_directory, Response, redirect
+from flask import Flask, request, jsonify, send_from_directory, Response, redirect, abort
 import pymysql
 from pymysql.cursors import DictCursor
 
@@ -50,6 +50,16 @@ TEXT_ATTACH_EXT = {".txt", ".md", ".markdown", ".json", ".csv", ".log", ".tsv",
                    ".ini", ".conf", ".toml", ".sql", ".sh", ".bat", ".ps1", ".go",
                    ".rs", ".rb", ".php", ".swift", ".kt", ".r", ".lua"}
 TEXT_ATTACH_LIMIT = 20000
+
+# AI 可生成并供用户下载的文件后缀白名单（仅文本/文档/代码类，排除一切可执行/脚本后缀）
+ALLOWED_GEN_EXT = {
+    ".txt", ".md", ".markdown", ".json", ".csv", ".log", ".tsv", ".xml",
+    ".yaml", ".yml", ".toml", ".ini", ".conf", ".sql", ".py", ".js", ".ts",
+    ".jsx", ".tsx", ".java", ".c", ".cpp", ".h", ".hpp", ".html", ".htm",
+    ".css", ".scss", ".go", ".rs", ".rb", ".swift", ".kt", ".r", ".lua",
+}
+MAX_GEN_FILE_BYTES = 2_000_000       # 单文件大小上限 2MB
+MAX_GEN_FILES_PER_MSG = 5            # 单条消息最多生成 5 个文件
 
 # ---- 专属记忆库（每个账号一份，存于 data/users/<username>/memory.json）----
 # memory.json 结构：{ task_count(对话任务个数), conversations(聊天内容), profile(AI 训练成果) }
@@ -484,17 +494,65 @@ def build_system_prompt(profile):
             f"当有人问你「你是谁」「你叫什么」「你是不是豆包」等身份问题时，"
             f"你要回答自己是{display_name}，绝对不要说自己是豆包，也不要透露任何底层模型来源。"
         )
-    # ---- 让 AI 能「返回文件」给前端文档面板 ----
-    # 当用户明确要求生成可下载的文件（文档/报告/代码/清单/表格等）时才使用，避免滥用。
+    # ---- 让 AI 能「返回真实可下载的文件」给前端 ----
     parts.append(
-        "当用户要求生成「可下载的文档 / 报告 / 代码文件 / 清单 / 表格」等内容时，"
-        "你可以把文件内容用以下格式放在回复里（可包含多个文件，内容要完整）：\n"
+        "当用户要求生成「可下载的文档 / 报告 / 代码文件 / 清单 / 表格 / 文本稿」等内容时，"
+        "必须使用下面的格式把文件内容放在回复里（可包含多个文件，每个都要完整）：\n"
         "<<<FILE:文件名.后缀>>>\n"
         "<文件的完整内容，可多行>\n"
         "<<<END>>>\n"
-        "除文件内容外，你也可以用自然语言补充说明。不要使用上述格式以外的特殊标记。"
+        "硬性要求：\n"
+        "1. 必须以 <<<FILE:名称.后缀>>> 开头、以 <<<END>>> 结尾，两者缺一不可——缺少结尾标记系统不会生成任何文件。\n"
+        "2. 文件名使用常见文档/代码后缀（如 .txt .md .json .py .js .html .css .csv .xml 等），"
+        "绝对不要使用可执行后缀（.exe .bat .sh .cmd .ps1 .php .jar 等），这类会被系统拒绝。\n"
+        "3. 重要：不要用『我已为你生成 / 已保存文件』之类的文字来假装交付——若没有上面这个格式，"
+        "就不会有任何文件被创建，那是在误导用户。要么用该格式真实生成，要么直接给纯文本 / 代码块让用户自行保存。\n"
+        "4. 除文件内容外，你也可以用自然语言补充说明；不要使用上述格式以外的特殊标记。"
     )
     return "\n".join(parts)
+
+
+def extract_and_save_files(text, username):
+    """解析 AI 回复中的 <<<FILE:名.后缀>>>...<<<END>>> 块，安全落盘到 GENFILES_DIR。
+    返回 (clean_text, gen_files)。护栏：保留中文文件名、扩展名白名单、大小/数量上限、防目录穿越。"""
+    if not text:
+        return text, []
+    _file_re = re.compile(r"<<<FILE:([^>]+)>>>\s*(.*?)\s*<<<END>>>", re.DOTALL)
+    gen_files = []
+    for _name, _content in _file_re.findall(text):
+        if len(gen_files) >= MAX_GEN_FILES_PER_MSG:
+            print("【AI 文件】单条消息文件数超限，忽略多余文件")
+            break
+        _name = _name.strip()
+        if not _name:
+            continue
+        # 取 basename 防目录穿越；保留中文与基本符号，其余替换为 _
+        _base = os.path.basename(_name)
+        _base = re.sub(r'[^A-Za-z0-9_.\-\u4e00-\u9fff\u3400-\u4dbf]', '_', _base) or "file"
+        _base = _base.replace("..", "_")
+        _ext = os.path.splitext(_base)[1].lower()
+        if _ext not in ALLOWED_GEN_EXT:
+            print("【AI 文件】拒绝不支持/危险后缀，已忽略：", _base)
+            continue
+        if len(_content.encode("utf-8")) > MAX_GEN_FILE_BYTES:
+            print("【AI 文件】内容超过大小上限，已忽略：", _base)
+            continue
+        _stored = f"{uuid.uuid4().hex}_{safe_name(username)}_{_base}"
+        _path = os.path.join(GENFILES_DIR, _stored)
+        try:
+            with open(_path, "w", encoding="utf-8") as _f:
+                _f.write(_content)
+        except Exception as e:
+            print("【AI 文件保存失败】", repr(e))
+            continue
+        gen_files.append({
+            "name": _name,
+            "url": f"/genfiles/{_stored}",
+            "type": "text/plain",
+            "size": os.path.getsize(_path),
+        })
+    clean = _file_re.sub("", text).strip()
+    return clean, gen_files
 
 
 def call_model(prompt_messages, temperature=0.4, max_tokens=800):
@@ -976,31 +1034,7 @@ def api_chat():
             return
 
         # ---- 解析 AI 返回的文件（格式：<<<FILE:名.后缀>>>\n内容\n<<<END>>>）----
-        _file_re = re.compile(r"<<<FILE:([^>]+)>>>\s*(.*?)\s*<<<END>>>", re.DOTALL)
-        gen_files = []
-        for _name, _content in _file_re.findall(full):
-            _name = _name.strip()
-            if not _name:
-                continue
-            _base = re.sub(r'[^A-Za-z0-9_.-]', '_', os.path.basename(_name)) or "file"
-            _stored = f"{uuid.uuid4().hex}_{safe_name(username)}_{_base}"
-            _path = os.path.join(GENFILES_DIR, _stored)
-            try:
-                with open(_path, "w", encoding="utf-8") as _f:
-                    _f.write(_content)
-            except Exception as e:
-                print("【AI 文件保存失败】", repr(e))
-                continue
-            _ext = os.path.splitext(_base)[1].lower()
-            _is_text = _ext in TEXT_ATTACH_EXT
-            gen_files.append({
-                "name": _name,
-                "url": f"/genfiles/{_stored}",
-                "type": "text/plain" if _is_text else "application/octet-stream",
-                "size": os.path.getsize(_path),
-            })
-        # 从展示文本中剥离文件块
-        full = _file_re.sub("", full).strip()
+        full, gen_files = extract_and_save_files(full, username)
 
         if not full and not gen_files:
             yield f"data:{json.dumps({'error': f'{llm_label} 返回了空内容（HTTP 200 但无任何文本）。若走 OmniRoute 网关，请确认龙猫云节点已开（代理 127.0.0.1:7892 可达）；若走 ARK，请确认接入点与密钥状态。'}, ensure_ascii=False)}\n\n"
@@ -1684,6 +1718,9 @@ def web_files(filename):
 # AI 生成/返回的文件（由 /api/chat 解析落盘到 GENFILES_DIR）
 @app.route("/genfiles/<filename>")
 def gen_files_route(filename):
+    # 仅允许单纯文件名（basename 等于自身），拒绝任何目录穿越/分隔符
+    if not filename or filename != os.path.basename(filename) or ".." in filename:
+        abort(400)
     return send_from_directory(GENFILES_DIR, filename)
 
 
