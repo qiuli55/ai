@@ -645,8 +645,38 @@ EDGE_TTS_VOICES = {
     "male": "zh-CN-YunxiNeural",
 }
 
+def clean_for_tts(text: str) -> str:
+    """送音前清洗：仅用于语音合成，不影响聊天显示。
+    剥离整行装饰线 / Markdown 符号 / 内部文件标记；保留行内数学符号(= + * 等)。"""
+    if not text:
+        return text
+    import re
+    lines = text.split("\n")
+    out = []
+    for line in lines:
+        s = line.strip()
+        # 1) 跳过整行纯装饰符号（连续 3+ 个 = - _ * ~ # > + 等）
+        if re.fullmatch(r"[=\-_*~#>+]{3,}", s):
+            continue
+        # 2) 去除行首 Markdown 标题/引用/列表符号，保留文字
+        line = re.sub(r"^\s{0,3}(#{1,6}|>|\*|\-|\+|\d+\.)\s+", "", line)
+        # 3) 去除成对 Markdown 强调符号，保留文字
+        line = re.sub(r"\*\*(.+?)\*\*", r"\1", line)
+        line = re.sub(r"__(.+?)__", r"\1", line)
+        line = re.sub(r"\*(.+?)\*", r"\1", line)
+        line = re.sub(r"_(.+?)_", r"\1", line)
+        line = re.sub(r"~~(.+?)~~", r"\1", line)
+        line = re.sub(r"`(.+?)`", r"\1", line)
+        # 4) 去除内部文件/指令标记 <<<FILE:...>>> <<<END>>> 等
+        line = re.sub(r"<<<[^>]*>>>", "", line)
+        out.append(line)
+    cleaned = "\n".join(out)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned
+
 def edge_tts(text: str, gender: str = None) -> str:
     """使用 Edge TTS 生成语音，返回保存的文件路径"""
+    text = clean_for_tts(text)
     try:
         import asyncio
         import edge_tts as et
