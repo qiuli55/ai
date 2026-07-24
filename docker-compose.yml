@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  nova:
+    build: .
+    ports:
+      - "7860:7860"
+    environment:
+      - LLM_PROVIDER=ollama
+    volumes:
+      - ./speek/data:/app/speek/data
+      - ./speek/avatars:/app/speek/avatars
+    restart: unless-stopped

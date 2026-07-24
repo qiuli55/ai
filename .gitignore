@@ -1,5 +1,55 @@
-.workbuddy/
+# Python
 __pycache__/
-node_modules/
-*.pt
-*.safetensors
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.env
+venv/
+.kb_cache.json
+
+# IDE
+.workbuddy/
+.vscode/
+.idea/
+
+# Audio / training data
+*.mp3
+*.wav
+*.pth
+*.ckpt
+train_data/
+
+# frp
+frpc.exe
+frpc.toml
+frps.exe
+frps.toml
+start_frpc.bat
+start_frps.bat
+frp.zip
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
+
+# Secrets
+.webui_secret_key
+
+# Junk / reserved device name on Windows
+nul
+
+# Runtime user data (private conversations / generated assets)
+speek/data/users/
+speek/data/bot_avatars/
+speek/split_audio/
+
+# Auto-push helper scripts (may contain credentials, not project source)
+push_optimized.py
+push_github.py
+push_github.js
+run_push.bat
+run_push_optimized.bat

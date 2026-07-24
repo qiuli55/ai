@@ -14,8 +14,8 @@
     <div class="bg-glow bg-glow-2"></div>
     <div class="bg-grid"></div>
 
-    <!-- 顶部导航 -->
-    <header class="nav">
+    <!-- 顶部导航（sticky） -->
+    <header class="nav" id="topNav">
         <div class="nav-logo">
             <span class="logo-mark"></span>
             <div class="logo-text">
@@ -64,7 +64,7 @@
     </header>
 
     <!-- 主视觉 -->
-    <main class="hero">
+    <main class="hero" id="hero">
         <!-- 左侧文案 -->
         <section class="hero-text">
             <span class="badge">AI DIGITAL HUMAN</span>
@@ -121,6 +121,217 @@
             </div>
         </section>
     </main>
+
+    <!-- ===== 核心能力 ===== -->
+    <section class="nova-section" id="features">
+        <div class="section-inner">
+            <span class="section-badge">CORE CAPABILITIES</span>
+            <h2 class="section-title">核心能力</h2>
+            <p class="section-desc">融合前沿 AI 技术，打造真正有温度的数字生命体</p>
+
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <div class="fc-icon">
+                        <svg viewBox="0 0 40 40" fill="none" stroke="#22d3ee" stroke-width="1.8">
+                            <path d="M20 8c-4 0-7 3-7 7 0 2 .7 3.8 2 5.2V26l3-1.5c1 .3 2 .5 3 .5s2-.2 3-.5L27 26v-5.8c1.3-1.4 2-3.2 2-5.2 0-4-3-7-7-7z"/>
+                            <path d="M16 18h8M16 22h6" stroke="#a855f7"/>
+                        </svg>
+                    </div>
+                    <h3>情感计算引擎</h3>
+                    <p>基于多模态情感识别模型，实时感知用户情绪状态，动态调整交互策略，让每次对话都充满温度。</p>
+                </div>
+                <div class="feature-card">
+                    <div class="fc-icon">
+                        <svg viewBox="0 0 40 40" fill="none" stroke="#22d3ee" stroke-width="1.8">
+                            <circle cx="20" cy="20" r="3"/>
+                            <path d="M10 14c4-4 10-4 14 0M10 26c4 4 10 4 14 0M7 10c7-6 17-6 24 0M7 30c7 6 17 6 24 0" stroke="#a855f7" stroke-width="1.4"/>
+                        </svg>
+                    </div>
+                    <h3>多模态感知</h3>
+                    <p>融合文本、语音、视觉等多维信息，全方位理解用户意图，提供更自然的人机交互体验。</p>
+                </div>
+                <div class="feature-card">
+                    <div class="fc-icon">
+                        <svg viewBox="0 0 40 40" fill="none" stroke="#22d3ee" stroke-width="1.8">
+                            <path d="M12 16c-2 2-2 6 0 8M28 16c2 2 2 6 0 8"/>
+                            <path d="M8 12c-4 4-4 12 0 16M32 12c4 4 4 12 0 16"/>
+                            <rect x="17" y="6" width="6" height="12" rx="1"/>
+                            <path d="M18 28h4l-2 6h-2z" fill="#a855f7" stroke="none"/>
+                        </svg>
+                    </div>
+                    <h3>实时语音合成</h3>
+                    <p>毫秒级延迟的语音生成技术，支持多种音色风格，让数字人拥有自然流畅的语音表达能力。</p>
+                </div>
+                <div class="feature-card">
+                    <div class="fc-icon">
+                        <svg viewBox="0 0 40 40" fill="none" stroke="#22d3ee" stroke-width="1.8">
+                            <circle cx="16" cy="14" r="5"/>
+                            <path d="M8 32c0-6 4-10 8-10s8 4 8 10"/>
+                            <path d="M28 10l4 4-6 6-4-4 6-6z" stroke="#a855f7"/>
+                        </svg>
+                    </div>
+                    <h3>个性化人格</h3>
+                    <p>支持自定义人设风格（高冷/温柔/毒舌/可爱），每条对话独立人格，打造独一无二的 AI 伴侣。</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ===== 应用场景 ===== -->
+    <section class="nova-section section-alt" id="scenes">
+        <div class="section-inner">
+            <span class="section-badge">APPLICATION SCENARIOS</span>
+            <h2 class="section-title">应用场景</h2>
+            <p class="section-desc">覆盖多元场景，让 AI 数字人触手可及</p>
+
+            <div class="scene-grid">
+                <div class="scene-card">
+                    <div class="sc-icon">
+                        <svg viewBox="0 0 40 40" fill="none" stroke="#a855f7" stroke-width="1.8">
+                            <path d="M10 18c0-5 4-10 10-10s10 5 10 10v4c0 3-2 5-4 5h-2v4" stroke="#22d3ee"/>
+                            <circle cx="16" cy="21" r="1.5" fill="#22d3ee" stroke="none"/>
+                            <circle cx="24" cy="21" r="1.5" fill="#22d3ee" stroke="none"/>
+                            <path d="M6 22h2M32 22h2" stroke-width="1.4"/>
+                        </svg>
+                    </div>
+                    <div class="sc-body">
+                        <h3>智能客服</h3>
+                        <p>7×24 小时在线，准确解答用户问题，大幅降低企业人力成本，提升客户满意度。</p>
+                        <div class="sc-tags">
+                            <span>语义理解</span>
+                            <span>多轮对话</span>
+                            <span>知识库</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="scene-card">
+                    <div class="sc-icon">
+                        <svg viewBox="0 0 40 40" fill="none" stroke="#a855f7" stroke-width="1.8">
+                            <path d="M20 32l-8-8c-4-4-4-10 0-14s10-4 14 0l2 2" stroke="#22d3ee"/>
+                            <path d="M28 10l4 4-6 6-4-4 6-6z"/>
+                            <path d="M20 16l4 4-6 6-4-4 6-6z" stroke="#22d3ee" stroke-width="1.4"/>
+                        </svg>
+                    </div>
+                    <div class="sc-body">
+                        <h3>情感陪伴</h3>
+                        <p>倾听、理解、回应——做你随时随地的情感树洞，缓解孤独感，提供情绪价值。</p>
+                        <div class="sc-tags">
+                            <span>情感识别</span>
+                            <span>共情对话</span>
+                            <span>记忆回访</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="scene-card">
+                    <div class="sc-icon">
+                        <svg viewBox="0 0 40 40" fill="none" stroke="#a855f7" stroke-width="1.8">
+                            <rect x="8" y="6" width="18" height="28" rx="2" stroke="#22d3ee"/>
+                            <path d="M14 14h10M14 20h8M14 26h6" stroke="#22d3ee" stroke-width="1.4"/>
+                            <path d="M30 12l4 4-10 10-4-4 10-10z"/>
+                        </svg>
+                    </div>
+                    <div class="sc-body">
+                        <h3>教育培训</h3>
+                        <p>个性化学习助手，智能答疑解惑，根据学员水平动态调整教学策略与内容难度。</p>
+                        <div class="sc-tags">
+                            <span>自适应学习</span>
+                            <span>知识问答</span>
+                            <span>内容生成</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="scene-card">
+                    <div class="sc-icon">
+                        <svg viewBox="0 0 40 40" fill="none" stroke="#a855f7" stroke-width="1.8">
+                            <path d="M24 8l8 8-14 14H10v-8L24 8z" stroke="#22d3ee"/>
+                            <circle cx="26" cy="10" r="3" stroke="#22d3ee"/>
+                            <path d="M14 14l4 4M16 28l4-4" stroke="#22d3ee" stroke-width="1.2"/>
+                        </svg>
+                    </div>
+                    <div class="sc-body">
+                        <h3>创作助手</h3>
+                        <p>文案撰写、代码生成、创意策划——让你的灵感快速落地，提升创作效率。</p>
+                        <div class="sc-tags">
+                            <span>文案生成</span>
+                            <span>代码辅助</span>
+                            <span>创意策划</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ===== 关于我们 ===== -->
+    <section class="nova-section" id="about">
+        <div class="section-inner">
+            <span class="section-badge">ABOUT US</span>
+            <h2 class="section-title">关于我们</h2>
+            <p class="section-desc">用技术重新定义人机交互的边界</p>
+
+            <div class="about-content">
+                <div class="about-text">
+                    <p>NOVA 团队汇聚了来自人工智能、情感计算、人机交互等领域的顶尖人才。我们相信，真正的 AI 不只是冷冰冰的工具，而是有温度、有个性、能共同成长的数字生命体。</p>
+                    <p>自成立以来，NOVA 已服务超过 <strong>1,200+</strong> 企业客户，累计完成 <strong>120 万+</strong> 次智能交互，用户满意度持续保持在 <strong>98%</strong> 以上。</p>
+                </div>
+                <div class="about-stats">
+                    <div class="as-item">
+                        <strong>50+</strong>
+                        <span>核心算法专利</span>
+                    </div>
+                    <div class="as-item">
+                        <strong>1200+</strong>
+                        <span>服务企业客户</span>
+                    </div>
+                    <div class="as-item">
+                        <strong>120万+</strong>
+                        <span>累计交互次数</span>
+                    </div>
+                    <div class="as-item">
+                        <strong>98%</strong>
+                        <span>用户满意度</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ===== 页脚 ===== -->
+    <footer class="footer">
+        <div class="footer-inner">
+            <div class="footer-brand">
+                <div class="footer-logo">
+                    <span class="logo-mark"></span>
+                    <strong>NOVA</strong>
+                </div>
+                <p class="footer-tagline">数字生命 · 情感交互引擎</p>
+                <p class="footer-desc">用温度重新定义人机交互，让 AI 成为有灵魂的数字伴侣。</p>
+            </div>
+            <div class="footer-links">
+                <div class="fl-col">
+                    <h4>产品</h4>
+                    <a href="#">核心能力</a>
+                    <a href="#">应用场景</a>
+                    <a href="#">定价方案</a>
+                </div>
+                <div class="fl-col">
+                    <h4>支持</h4>
+                    <a href="#">帮助中心</a>
+                    <a href="#">API 文档</a>
+                    <a href="#">状态页</a>
+                </div>
+                <div class="fl-col">
+                    <h4>关于</h4>
+                    <a href="#">团队介绍</a>
+                    <a href="#">加入我们</a>
+                    <a href="#">联系邮箱</a>
+                </div>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2026 NOVA · 次世代数字生命体 &mdash; All rights reserved.</p>
+        </div>
+    </footer>
 
     <!-- 更换头像弹窗 -->
     <div class="modal-mask" id="avatarModal" hidden>

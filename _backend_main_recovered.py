@@ -186,38 +186,21 @@ def count_pairs(conversations):
                 n += 1
     return n
 
-# 本地 .env（不入库，已被 .gitignore 忽略）优先提供密钥；不存在则仅依赖环境变量
-def _load_local_env():
-    _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-    if os.path.exists(_p):
-        with open(_p, "r", encoding="utf-8") as _f:
-            for _line in _f:
-                _line = _line.strip()
-                if _line and not _line.startswith("#") and "=" in _line:
-                    _k, _v = _line.split("=", 1)
-                    os.environ.setdefault(_k.strip(), _v.strip())
-
-_load_local_env()
-
-ARK_API_KEY = os.environ.get("ARK_API_KEY", "")
+ARK_API_KEY = os.environ.get("ARK_API_KEY", "YOUR_ARK_API_KEY_HERE")
 ARK_CONFIGURED = bool(ARK_API_KEY) and ARK_API_KEY != "YOUR_ARK_API_KEY"
 CHAT_MODEL_ID = "ep-m-20260714044607-f5tfj"
 ARK_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
 # 语音转文字使用的音频理解模型（需在方舟控制台开通）。可用 ARK_ASR_MODEL 环境变量覆盖。
 ASR_MODEL_ID = os.environ.get("ARK_ASR_MODEL", "ep-m-20260723034312-t27x7")
 
-# ---- LLM 路由：普通聊天走本地 OmniRoute 网关，深度思考走火山 ARK，不再直连 Ollama ----
-# OmniRoute 网关（OpenAI 兼容，监听 :20128）。普通聊天经此网关，默认用 Pollinations 免费模型
-# （GPT/Claude 同款，走网关 + 龙猫云节点 7892 出口）；深度思考单独走 ARK（能力强、稳定）。
-# 网关模型名带前缀：pollinations/openai（免费云端）、ollama-local/qwen3:8b（本地，想走本地改 OMNIROUTE_MODEL）。
-# 环境变量覆盖：
-#   OMNIROUTE_URL    网关地址（默认 http://127.0.0.1:20128/v1/chat/completions）
-#   OMNIROUTE_KEY    网关密钥（默认 CHANGEME，与 OmniRoute 后台一致）
-#   OMNIROUTE_MODEL  普通聊天默认模型（默认 pollinations/openai；想走本地改 ollama-local/qwen3:8b）
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "omniroute").lower()
-OMNIROUTE_URL = os.environ.get("OMNIROUTE_URL", "http://127.0.0.1:20128/v1/chat/completions")
-OMNIROUTE_KEY = os.environ.get("OMNIROUTE_KEY", "CHANGEME")
-OMNIROUTE_MODEL = os.environ.get("OMNIROUTE_MODEL", "auto/best-coding")
+# ---- 本地大模型（Ollama，OpenAI 兼容，可选）----
+# 默认使用本机 Ollama（qwen3:8b），设置环境变量 LLM_PROVIDER=ark 可切回 ARK。
+# Ollama 暴露的 OpenAI 兼容端点与 ARK 返回格式一致，SSE 解析代码无需改动。
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "ollama").lower()
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434/v1/chat/completions")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:8b")
+OLLAMA_MODEL_DEEP = os.environ.get("OLLAMA_MODEL_DEEP", "qwen3:4b")
+OLLAMA_MODEL_FAST = os.environ.get("OLLAMA_MODEL_FAST", "qwen3:4b")
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 全局请求体上限 25MB
@@ -633,21 +616,27 @@ def api_chat():
         messages.append({"role": "user", "content": item[0]})
         messages.append({"role": "assistant", "content": item[1]})
     messages.append({"role": "user", "content": user_msg})
+    # Qwen3 默认开启 thinking 模式会吃光 max_tokens；深度思考时保留，普通模式关闭
+    if LLM_PROVIDER == "ollama" and messages and messages[-1]["role"] == "user":
+        if not deep_think:
+            messages[-1]["content"] += " /no_think"
+
     def generate():
-        # 路由：深度思考走火山 ARK；普通聊天走本地 OmniRoute 网关（默认 Pollinations 免费模型）
-        if deep_think:
+        # 根据 LLM_PROVIDER 选择后端（默认 ARK，可选本机 Ollama）
+        if LLM_PROVIDER == "ollama":
+            llm_url = OLLAMA_URL
+            llm_key = "ollama"          # Ollama 不校验密钥，占位即可
+            # 深度思考用 8b，普通用 4b
+            llm_model = OLLAMA_MODEL_DEEP if deep_think else OLLAMA_MODEL_FAST
+            llm_label = f"Ollama({llm_model})"
+        else:
             if not ARK_CONFIGURED:
-                yield f"data:{json.dumps({'error': '后端未配置 ARK_API_KEY：请在 backend.py 第189行改为真实密钥，或设置环境变量 ARK_API_KEY 后重启后端。'}, ensure_ascii=False)}\n\n"
+                yield f"data:{json.dumps({'error': '后端未配置 ARK_API_KEY：请在 backend.py 第105行改为真实密钥，或设置环境变量 ARK_API_KEY 后重启后端。'}, ensure_ascii=False)}\n\n"
                 return
             llm_url = ARK_URL
             llm_key = ARK_API_KEY
             llm_model = CHAT_MODEL_ID
-            llm_label = "ARK(深度思考)"
-        else:
-            llm_url = OMNIROUTE_URL
-            llm_key = OMNIROUTE_KEY
-            llm_model = OMNIROUTE_MODEL
-            llm_label = f"OmniRoute({llm_model})"
+            llm_label = "ARK"
 
         payload = {
             "model": llm_model,
@@ -688,23 +677,23 @@ def api_chat():
                 try:
                     obj = json.loads(raw)
                 except Exception as e:
-                    yield f"data:{json.dumps({'error': f'{llm_label} 返回无法解析的数据：{e}；原文前200字：{raw[:200]}'}, ensure_ascii=False)}\n\n"
+                    yield f"data:{json.dumps({'error': f'ARK 返回无法解析的数据：{e}；原文前200字：{raw[:200]}'}, ensure_ascii=False)}\n\n"
                     return
                 if obj.get("error"):
                     err = obj["error"]
                     msg = err.get("message") if isinstance(err, dict) else str(err)
-                    yield f"data:{json.dumps({'error': f'{llm_label} 返回错误：{msg}'}, ensure_ascii=False)}\n\n"
+                    yield f"data:{json.dumps({'error': f'ARK 返回错误：{msg}'}, ensure_ascii=False)}\n\n"
                     return
                 try:
                     token = obj["choices"][0]["delta"].get("content", "")
                 except Exception as e:
-                    yield f"data:{json.dumps({'error': f'{llm_label} 返回结构异常：{e}；原文前200字：{raw[:200]}'}, ensure_ascii=False)}\n\n"
+                    yield f"data:{json.dumps({'error': f'ARK 返回结构异常：{e}；原文前200字：{raw[:200]}'}, ensure_ascii=False)}\n\n"
                     return
                 if token:
                     full += token
                     yield f"data:{json.dumps({'text': token}, ensure_ascii=False)}\n\n"
         except Exception as e:
-            yield f"data:{json.dumps({'error': f'{llm_label} 流读取异常：{e}'}, ensure_ascii=False)}\n\n"
+            yield f"data:{json.dumps({'error': f'ARK 流读取异常：{e}'}, ensure_ascii=False)}\n\n"
             return
 
         # ---- 解析 AI 返回的文件（格式：<<<FILE:名.后缀>>>\n内容\n<<<END>>>）----
@@ -735,7 +724,7 @@ def api_chat():
         full = _file_re.sub("", full).strip()
 
         if not full and not gen_files:
-            yield f"data:{json.dumps({'error': f'{llm_label} 返回了空内容（HTTP 200 但无任何文本）。若走 OmniRoute 网关，请确认龙猫云节点已开（代理 127.0.0.1:7892 可达）；若走 ARK，请确认接入点与密钥状态。'}, ensure_ascii=False)}\n\n"
+            yield f"data:{json.dumps({'error': 'ARK 返回了空内容（HTTP 200 但无任何文本）。常见原因：模型接入点 ep-m-20260714044607-f5tfj 未生效/已过期，或账号余额/权限不足。请到火山引擎控制台确认接入点与密钥状态。'}, ensure_ascii=False)}\n\n"
             return
 
         # 若本次回复包含 AI 生成的文件，末尾补发一个 files 事件，前端据此渲染文件卡片
@@ -768,32 +757,36 @@ def api_chat():
 
 @app.route("/api/llm-test")
 def api_llm_test():
-    """诊断当前普通聊天后端（OmniRoute 网关），前端可调用查看实时状态。深度思考走 ARK 见 /api/ark-test。"""
-    test_payload = {
-        "model": OMNIROUTE_MODEL,
-        "messages": [{"role": "user", "content": "你好，请只回复两个字：在的"}],
-        "temperature": 0.5,
-        "max_tokens": 50,
-        "stream": False,
-    }
-    headers = {"Authorization": f"Bearer {OMNIROUTE_KEY}", "Content-Type": "application/json"}
-    try:
-        r = requests.post(OMNIROUTE_URL, json=test_payload, headers=headers, timeout=120)
-        body = r.text[:800]
+    """诊断当前 LLM 后端（ARK 或 Ollama），前端可调用查看实时状态。"""
+    if LLM_PROVIDER == "ollama":
+        test_payload = {
+            "model": OLLAMA_MODEL,
+            "messages": [{"role": "user", "content": "你好，请只回复两个字：在的 /no_think"}],
+            "temperature": 0.5,
+            "max_tokens": 50,
+            "stream": False,
+        }
+        headers = {"Authorization": "Bearer ollama", "Content-Type": "application/json"}
         try:
-            obj = r.json()
-            content = obj.get("choices", [{}])[0].get("message", {}).get("content", "")
-        except Exception:
-            content = ""
-        return jsonify({
-            "provider": "omniroute",
-            "model": OMNIROUTE_MODEL,
-            "http_status": r.status_code,
-            "reply": content,
-            "raw": body,
-        })
-    except Exception as e:
-        return jsonify({"provider": "omniroute", "model": OMNIROUTE_MODEL, "http_status": None, "error": str(e)})
+            r = requests.post(OLLAMA_URL, json=test_payload, headers=headers, timeout=120)
+            body = r.text[:800]
+            try:
+                obj = r.json()
+                content = obj.get("choices", [{}])[0].get("message", {}).get("content", "")
+            except Exception:
+                content = ""
+            return jsonify({
+                "provider": "ollama",
+                "model": OLLAMA_MODEL,
+                "http_status": r.status_code,
+                "reply": content,
+                "raw": body,
+            })
+        except Exception as e:
+            return jsonify({"provider": "ollama", "model": OLLAMA_MODEL, "http_status": None, "error": str(e)})
+    else:
+        return api_ark_test()
+
 
 @app.route("/api/ark-test")
 def api_ark_test():

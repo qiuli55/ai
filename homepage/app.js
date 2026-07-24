@@ -2,18 +2,66 @@
 const DEFAULT_AVATAR = "nova-hero.jpg";
 
 document.addEventListener("DOMContentLoaded", () => {
-    // 导航链接高亮 + 平滑滚动
     const links = document.querySelectorAll(".nav-links a");
+    const sections = document.querySelectorAll("#hero, #features, #scenes, #about");
+    const NAV_H = document.getElementById("topNav")?.offsetHeight || 70;
+
+    // 缓动函数：easeInOutCubic
+    function ease(t) {
+        return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    }
+
+    // 手动平滑滚动（保证在任何浏览器都丝滑）
+    function scrollToSection(id) {
+        const el = document.querySelector(id);
+        if (!el) return;
+        const startY = window.scrollY;
+        const targetY = el.getBoundingClientRect().top + startY - NAV_H;
+        const distance = targetY - startY;
+        const duration = Math.min(Math.max(Math.abs(distance) * 0.5, 300), 800);
+        let startTime = null;
+
+        function step(now) {
+            if (!startTime) startTime = now;
+            const elapsed = now - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            window.scrollTo(0, startY + distance * ease(progress));
+            if (progress < 1) requestAnimationFrame(step);
+        }
+        requestAnimationFrame(step);
+    }
+
+    // 点击导航：平滑滚动 + 高亮
     links.forEach((a) => {
         a.addEventListener("click", (e) => {
             const id = a.getAttribute("href");
             if (id && id.startsWith("#") && document.querySelector(id)) {
                 e.preventDefault();
-                document.querySelector(id).scrollIntoView({ behavior: "smooth" });
+                scrollToSection(id);
+                links.forEach((x) => x.classList.remove("active"));
+                a.classList.add("active");
             }
-            links.forEach((x) => x.classList.remove("active"));
-            a.classList.add("active");
         });
+    });
+
+    // 滚动高亮（带节流）
+    let ticking = false;
+    window.addEventListener("scroll", () => {
+        if (!ticking) {
+            requestAnimationFrame(() => {
+                let current = "hero";
+                sections.forEach((s) => {
+                    const top = s.offsetTop - NAV_H - 1;
+                    if (window.scrollY >= top) current = s.id;
+                });
+                links.forEach((a) => {
+                    a.classList.remove("active");
+                    if (a.getAttribute("href") === "#" + current) a.classList.add("active");
+                });
+                ticking = false;
+            });
+            ticking = true;
+        }
     });
 
     // 入场动画
@@ -30,9 +78,36 @@ document.addEventListener("DOMContentLoaded", () => {
 
     initUserMenu();
     bindStartChatButtons();
+    initPasswordToggles();
 });
 
 // ===============================
+// 密码小眼睛
+// ===============================
+function initPasswordToggles() {
+    const eyeSVG = (open) => open
+        ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'
+        : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+    document.querySelectorAll("input[type='password']").forEach(input => {
+        if (input.closest(".pwd-wrap")) return;
+        const wrap = document.createElement("span");
+        wrap.className = "pwd-wrap";
+        const eye = document.createElement("button");
+        eye.type = "button";
+        eye.className = "pwd-eye";
+        eye.innerHTML = eyeSVG(false);
+        eye.setAttribute("aria-label", "显示密码");
+        input.parentNode.insertBefore(wrap, input);
+        wrap.appendChild(input);
+        wrap.appendChild(eye);
+        eye.addEventListener("click", () => {
+            const show = input.type === "password";
+            input.type = show ? "text" : "password";
+            eye.innerHTML = eyeSVG(show);
+            eye.setAttribute("aria-label", show ? "隐藏密码" : "显示密码");
+        });
+    });
+}// ===============================
 // 登录态：头像 + 下拉菜单 + 弹窗
 // ===============================
 function getSession() {
@@ -120,10 +195,9 @@ function initUserMenu() {
     bindModals();
 }
 
-// ---- 内部导航助手：非后端环境自动加前缀 http://127.0.0.1:7860 ----
+// ---- 内部导航助手：使用相对路径，兼容本地/隧道/域名访问 ----
 function backendBase() {
-    const onBackend = window.location.port === "7860" || window.location.href.includes(":7860/");
-    return onBackend ? "" : "http://127.0.0.1:7860";
+    return "";
 }
 function go(path) {
     window.location.href = backendBase() + path;
@@ -312,7 +386,7 @@ function bindStartChatButtons() {
                 go("/auth/");
                 return;
             }
-            go("/");
+            go("/chat/");
         });
     });
 }
