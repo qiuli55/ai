@@ -46,6 +46,8 @@ nul
 speek/data/users/
 speek/data/bot_avatars/
 speek/split_audio/
+# AI 生成的可下载文件（用户私有产物，不入库）
+speek/genfiles/
 # Migration backup (private conversation JSON exported during JSON -> MySQL)
 speek/backup_json_*/
 # Recovered backend copy (redundant, superseded by MySQL-backed version)
