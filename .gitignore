@@ -57,3 +57,9 @@ push_github.py
 push_github.js
 run_push.bat
 run_push_optimized.bat
+
+# Exploration / runtime artifacts (OmniRoute, Ollama probes; may contain cookies/keys)
+models_list.json
+ollama_detail.json
+or_cookie.txt
+providers.json
