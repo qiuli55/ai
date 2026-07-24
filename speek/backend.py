@@ -829,6 +829,8 @@ def build_user_message_with_attachments(text, attachments):
     return "\n\n".join(parts)
 
 
+ROUTING_HISTORY = []  # 最近路由记录（每条 AI 回答实际走的模型/后端），供前端 model-tag 与 /api/routing-log 使用
+
 @app.route("/api/chat", methods=["POST"])
 def api_chat():
     data = request.get_json()
@@ -882,6 +884,7 @@ def api_chat():
             llm_model = OMNIROUTE_MODEL
             llm_label = f"OmniRoute({llm_model})"
 
+        actual_model = None  # 上游首包回传的真实模型名（如 big-pickle / doubao-...）
         payload = {
             "model": llm_model,
             "messages": messages,
@@ -923,6 +926,8 @@ def api_chat():
                 except Exception as e:
                     yield f"data:{json.dumps({'error': f'{llm_label} 返回无法解析的数据：{e}；原文前200字：{raw[:200]}'}, ensure_ascii=False)}\n\n"
                     return
+                if actual_model is None and obj.get("model"):
+                    actual_model = obj["model"]
                 if obj.get("error"):
                     err = obj["error"]
                     msg = err.get("message") if isinstance(err, dict) else str(err)
@@ -974,6 +979,31 @@ def api_chat():
         # 若本次回复包含 AI 生成的文件，末尾补发一个 files 事件，前端据此渲染文件卡片
         if gen_files:
             yield f"data:{json.dumps({'type': 'files', 'text': full, 'files': gen_files}, ensure_ascii=False)}\n\n"
+
+        # ---- 路由记录：把本次回答实际走的模型/后端推给前端 model-tag，并记入 ROUTING_HISTORY ----
+        _routing_label = actual_model or llm_model
+        try:
+            yield f"data:{json.dumps({'type': 'model', 'label': _routing_label, 'backend': 'ark' if deep_think else 'omniroute', 'fell_back': False}, ensure_ascii=False)}\n\n"
+        except Exception:
+            pass
+        try:
+            _q = ""
+            if messages:
+                _c = messages[-1].get("content", "")
+                _q = (_c if isinstance(_c, str) else str(_c))[:60]
+            ROUTING_HISTORY.append({
+                "time": time.strftime("%H:%M:%S", time.localtime()),
+                "user": username,
+                "q": _q,
+                "backend": "ark" if deep_think else "omniroute",
+                "config_model": llm_model,
+                "actual_model": actual_model or "(unknown)",
+                "label": _routing_label,
+            })
+            if len(ROUTING_HISTORY) > 200:
+                ROUTING_HISTORY[:] = ROUTING_HISTORY[-200:]
+        except Exception:
+            pass
 
         # 自动增量学习角色画像（按对话隔离，后台不阻塞本次回复）
         try:
@@ -1061,6 +1091,15 @@ def api_ark_test():
         })
     except Exception as e:
         return jsonify({"configured": True, "http_status": None, "error": str(e)})
+
+
+@app.route("/api/routing-log")
+def api_routing_log():
+    """返回最近 50 条路由记录：每次 AI 回答实际走的模型/后端，供监听使用。"""
+    try:
+        return jsonify({"count": len(ROUTING_HISTORY), "logs": ROUTING_HISTORY[-50:]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/title", methods=["POST"])
