@@ -1,0 +1,10 @@
+# frp 客户端配置（放到你电脑上）
+server_addr = "159.75.222.60"
+server_port = 7000
+
+[[proxies]]
+name = "nova"
+type = "tcp"
+local_ip = "127.0.0.1"
+local_port = 7860
+remote_port = 17860
