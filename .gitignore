@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.env
+venv/
+.kb_cache.json
+
+# IDE
+.workbuddy/
+.vscode/
+.idea/
+
+# Audio / training data
+*.mp3
+*.wav
+*.pth
+*.ckpt
+train_data/
+
+# frp
+frpc.exe
+frpc.toml
+frps.exe
+frps.toml
+start_frpc.bat
+start_frps.bat
+frp.zip
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
