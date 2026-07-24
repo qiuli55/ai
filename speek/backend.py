@@ -9,6 +9,8 @@ import threading
 import shutil
 import requests
 from flask import Flask, request, jsonify, send_from_directory, Response, redirect
+import pymysql
+from pymysql.cursors import DictCursor
 
 # ---- 清除可能继承到的失效代理 ----
 # 后端只与 ARK(直连可达)、本机 Ollama/SoVITS 通信，不需要代理。
@@ -70,7 +72,8 @@ def _default_memory():
         "task_count": 0,
         "conversations": [],
         "profile": {"name": "小诺", "base_setting": "", "learned": "",
-                    "learned_turns": 0, "updated_at": 0},
+                    "learned_turns": 0, "updated_at": 0,
+                    "bot_avatar": None, "persona_key": "", "persona_title": ""},
     }
 
 def default_persona():
@@ -128,36 +131,138 @@ def load_user_memory(username):
     cached = _memory_cache.get(username)
     if cached and (now - cached[0]) < _MEMORY_CACHE_TTL:
         return cached[1]
-    path = user_memory_path(username)
-    try:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            base = _default_memory()
-            for k, v in base.items():
-                data.setdefault(k, v)
-            data["profile"].setdefault("name", "小诺")
-            data["profile"].setdefault("learned_turns", 0)
-            # 兼容旧数据：每条对话都必须带独立 persona
-            for c in data.get("conversations", []):
-                ensure_persona(c)
-            data["task_count"] = len(data.get("conversations", []))
-            _memory_cache[username] = (now, data)
-            return data
-    except Exception:
-        pass
     data = _default_memory()
-    _memory_cache[username] = (now, data)
-    return data
+    uid = get_user_id(username)
+    try:
+        if uid is not None:
+            db = get_db()
+            try:
+                with db.cursor() as c:
+                    c.execute(
+                        "SELECT name, base_setting, learned, learned_turns, persona_key, "
+                        "persona_title, bot_avatar, updated_at FROM user_profile WHERE user_id=%s",
+                        (uid,))
+                    row = c.fetchone()
+                    if row:
+                        data["profile"] = {
+                            "name": row["name"], "base_setting": row["base_setting"],
+                            "learned": row["learned"], "learned_turns": row["learned_turns"],
+                            "persona_key": row["persona_key"], "persona_title": row["persona_title"],
+                            "bot_avatar": row["bot_avatar"], "updated_at": row["updated_at"],
+                        }
+                    c.execute(
+                        "SELECT id, title, title_lock, pinned, created_at, updated_at, "
+                        "p_name, p_base_setting, p_learned, p_learned_turns, p_bot_avatar, "
+                        "p_persona_key, p_persona_title, p_updated_at "
+                        "FROM conversations WHERE user_id=%s ORDER BY created_at ASC", (uid,))
+                    for conv in c.fetchall():
+                        cid = conv["id"]
+                        c.execute(
+                            "SELECT role, content, attachments, files, seq, created_at "
+                            "FROM messages WHERE conversation_id=%s ORDER BY seq ASC", (cid,))
+                        messages = []
+                        for m in c.fetchall():
+                            messages.append({
+                                "role": m["role"],
+                                "content": m["content"],
+                                "attachments": json.loads(m["attachments"]) if m["attachments"] else [],
+                                "files": json.loads(m["files"]) if m["files"] else None,
+                            })
+                        data["conversations"].append({
+                            "id": conv["id"],
+                            "title": conv["title"],
+                            "titleLock": bool(conv["title_lock"]),
+                            "pinned": bool(conv["pinned"]),
+                            "createdAt": conv["created_at"],
+                            "updated_at": conv["updated_at"],
+                            "persona": {
+                                "name": conv["p_name"], "base_setting": conv["p_base_setting"],
+                                "learned": conv["p_learned"], "learned_turns": conv["p_learned_turns"],
+                                "bot_avatar": conv["p_bot_avatar"], "persona_key": conv["p_persona_key"],
+                                "persona_title": conv["p_persona_title"], "updated_at": conv["p_updated_at"],
+                            },
+                            "messages": messages,
+                        })
+                data["task_count"] = len(data["conversations"])
+            finally:
+                db.close()
+        # 兼容旧数据：每条对话都必须带独立 persona
+        for conv in data["conversations"]:
+            ensure_persona(conv)
+        _memory_cache[username] = (now, data)
+        return data
+    except Exception as e:
+        print("load_user_memory error:", e)
+        _memory_cache[username] = (now, data)
+        return data
 
 def save_user_memory(username, data):
     data = dict(data)
     convs = data.get("conversations", [])
     data["task_count"] = len(convs)
-    path = user_memory_path(username)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    uid = get_user_id(username)
+    if uid is not None:
+        try:
+            db = get_db()
+            try:
+                with db.cursor() as c:
+                    p = data.get("profile", {})
+                    c.execute(
+                        "INSERT INTO user_profile "
+                        "(user_id, name, base_setting, learned, learned_turns, persona_key, "
+                        "persona_title, bot_avatar, updated_at) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                        "ON DUPLICATE KEY UPDATE name=VALUES(name), base_setting=VALUES(base_setting), "
+                        "learned=VALUES(learned), learned_turns=VALUES(learned_turns), "
+                        "persona_key=VALUES(persona_key), persona_title=VALUES(persona_title), "
+                        "bot_avatar=VALUES(bot_avatar), updated_at=VALUES(updated_at)",
+                        (uid, p.get("name"), p.get("base_setting"), p.get("learned"),
+                         p.get("learned_turns", 0), p.get("persona_key"), p.get("persona_title"),
+                         p.get("bot_avatar"), p.get("updated_at", 0)))
+                    c.execute("SELECT id FROM conversations WHERE user_id=%s", (uid,))
+                    existing = {r["id"] for r in c.fetchall()}
+                    incoming = {conv.get("id") for conv in convs}
+                    to_del = existing - incoming
+                    if to_del:
+                        c.executemany("DELETE FROM conversations WHERE id=%s", [(x,) for x in to_del])
+                    for conv in convs:
+                        persona = conv.get("persona", {})
+                        c.execute(
+                            "INSERT INTO conversations "
+                            "(id, user_id, title, title_lock, pinned, created_at, updated_at, "
+                            "p_name, p_base_setting, p_learned, p_learned_turns, p_bot_avatar, "
+                            "p_persona_key, p_persona_title, p_updated_at) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                        "ON DUPLICATE KEY UPDATE title=VALUES(title), title_lock=VALUES(title_lock), "
+                            "pinned=VALUES(pinned), updated_at=VALUES(updated_at), p_name=VALUES(p_name), "
+                            "p_base_setting=VALUES(p_base_setting), p_learned=VALUES(p_learned), "
+                            "p_learned_turns=VALUES(p_learned_turns), p_bot_avatar=VALUES(p_bot_avatar), "
+                            "p_persona_key=VALUES(p_persona_key), p_persona_title=VALUES(p_persona_title), "
+                            "p_updated_at=VALUES(p_updated_at)",
+                            (conv.get("id"), uid, conv.get("title"), int(conv.get("titleLock", False)),
+                             int(conv.get("pinned", False)), conv.get("createdAt"),
+                             conv.get("updated_at", conv.get("createdAt")),
+                             persona.get("name"), persona.get("base_setting"), persona.get("learned"),
+                             persona.get("learned_turns", 0), persona.get("bot_avatar"),
+                             persona.get("persona_key"), persona.get("persona_title"),
+                             persona.get("updated_at", 0)))
+                        c.execute("DELETE FROM messages WHERE conversation_id=%s", (conv.get("id"),))
+                        for i, m in enumerate(conv.get("messages", [])):
+                            c.execute(
+                                "INSERT INTO messages "
+                                "(conversation_id, user_id, role, content, attachments, files, seq, created_at) "
+                                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                                (conv.get("id"), uid, m.get("role"), m.get("content"),
+                                 json.dumps(m.get("attachments", []), ensure_ascii=False) if m.get("attachments") else None,
+                                 json.dumps(m.get("files"), ensure_ascii=False) if m.get("files") else None,
+                                 i, m.get("created_at", int(time.time() * 1000))))
+                db.commit()
+            finally:
+                db.close()
+        except Exception as e:
+            print("save_user_memory error:", e)
     _memory_cache[username] = (time.time(), data)  # 更新缓存
+    return data
 
 def update_user_memory(username, patch):
     mem = load_user_memory(username)
@@ -168,14 +273,47 @@ def delete_user_memory(username):
     d = os.path.join(DATA_ROOT, safe_name(username))
     if os.path.isdir(d):
         shutil.rmtree(d, ignore_errors=True)
+    try:
+        db = get_db()
+        try:
+            with db.cursor() as c:
+                c.execute("DELETE FROM users WHERE username=%s", (username,))
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        print("delete_user_memory error:", e)
+    _memory_cache.pop(username, None)
 
 def load_user_profile(username):
     return load_user_memory(username)["profile"]
 
 def save_user_profile(username, profile):
-    mem = load_user_memory(username)
-    mem["profile"] = profile
-    save_user_memory(username, mem)
+    uid = get_user_id(username)
+    if uid is None:
+        return
+    try:
+        db = get_db()
+        try:
+            with db.cursor() as c:
+                c.execute(
+                    "INSERT INTO user_profile "
+                    "(user_id, name, base_setting, learned, learned_turns, persona_key, "
+                    "persona_title, bot_avatar, updated_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "ON DUPLICATE KEY UPDATE name=VALUES(name), base_setting=VALUES(base_setting), "
+                    "learned=VALUES(learned), learned_turns=VALUES(learned_turns), "
+                    "persona_key=VALUES(persona_key), persona_title=VALUES(persona_title), "
+                    "bot_avatar=VALUES(bot_avatar), updated_at=VALUES(updated_at)",
+                    (uid, profile.get("name"), profile.get("base_setting"), profile.get("learned"),
+                     profile.get("learned_turns", 0), profile.get("persona_key"), profile.get("persona_title"),
+                     profile.get("bot_avatar"), profile.get("updated_at", 0)))
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        print("save_user_profile error:", e)
+    _memory_cache.pop(username, None)
 
 def count_pairs(conversations):
     n = 0
@@ -188,16 +326,49 @@ def count_pairs(conversations):
 
 # 本地 .env（不入库，已被 .gitignore 忽略）优先提供密钥；不存在则仅依赖环境变量
 def _load_local_env():
-    _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-    if os.path.exists(_p):
-        with open(_p, "r", encoding="utf-8") as _f:
-            for _line in _f:
-                _line = _line.strip()
-                if _line and not _line.startswith("#") and "=" in _line:
-                    _k, _v = _line.split("=", 1)
-                    os.environ.setdefault(_k.strip(), _v.strip())
+    _here = os.path.dirname(os.path.abspath(__file__))
+    for _cand in (_here, os.path.dirname(_here)):
+        _p = os.path.join(_cand, ".env")
+        if os.path.exists(_p):
+            with open(_p, "r", encoding="utf-8") as _f:
+                for _line in _f:
+                    _line = _line.strip()
+                    if _line and not _line.startswith("#") and "=" in _line:
+                        _k, _v = _line.split("=", 1)
+                        os.environ.setdefault(_k.strip(), _v.strip())
+            break
 
 _load_local_env()
+
+# ---- MySQL 数据库连接（替代原有 JSON 文件存储）----
+DB_HOST = os.environ.get("DB_HOST", "127.0.0.1")
+DB_PORT = int(os.environ.get("DB_PORT", "3306"))
+DB_USER = os.environ.get("DB_USER", "speek")
+DB_PASSWORD = os.environ.get("DB_PASSWORD", "")
+DB_NAME = os.environ.get("DB_NAME", "speek")
+
+
+def get_db():
+    """返回一个新的 MySQL 连接；调用方负责 close。"""
+    return pymysql.connect(host=DB_HOST, port=DB_PORT, user=DB_USER,
+                           password=DB_PASSWORD, database=DB_NAME,
+                           charset="utf8mb4", cursorclass=DictCursor, autocommit=False)
+
+
+def get_user_id(username):
+    """用户名 -> users 表 id；不存在返回 None。"""
+    try:
+        db = get_db()
+        try:
+            with db.cursor() as c:
+                c.execute("SELECT id FROM users WHERE username=%s", (username,))
+                row = c.fetchone()
+            return row["id"] if row else None
+        finally:
+            db.close()
+    except Exception:
+        return None
+
 
 ARK_API_KEY = os.environ.get("ARK_API_KEY", "")
 ARK_CONFIGURED = bool(ARK_API_KEY) and ARK_API_KEY != "YOUR_ARK_API_KEY"
@@ -247,12 +418,45 @@ def load_chat_history():
 def load_character(username=None):
     if username:
         return load_user_profile(username)
+    try:
+        db = get_db()
+        try:
+            with db.cursor() as c:
+                c.execute("SELECT name, base_setting, learned, learned_turns, updated_at "
+                          "FROM character_profile WHERE id=1")
+                row = c.fetchone()
+            if row:
+                return {"name": row["name"], "base_setting": row["base_setting"],
+                        "learned": row["learned"], "learned_turns": row["learned_turns"],
+                        "updated_at": row["updated_at"]}
+        finally:
+            db.close()
+    except Exception:
+        pass
     return {"name": "小诺", "base_setting": "", "learned": "",
             "updated_at": 0, "learned_turns": 0}
+
 
 def save_character(data, username=None):
     if username:
         save_user_profile(username, data)
+        return
+    try:
+        db = get_db()
+        try:
+            with db.cursor() as c:
+                c.execute(
+                    "INSERT INTO character_profile (id, name, base_setting, learned, learned_turns, updated_at) "
+                    "VALUES (1, %s, %s, %s, %s, %s) "
+                    "ON DUPLICATE KEY UPDATE name=VALUES(name), base_setting=VALUES(base_setting), "
+                    "learned=VALUES(learned), learned_turns=VALUES(learned_turns), updated_at=VALUES(updated_at)",
+                    (data.get("name"), data.get("base_setting"), data.get("learned"),
+                     data.get("learned_turns", 0), data.get("updated_at", 0)))
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        print("save_character error:", e)
 
 
 def build_system_prompt(profile):
@@ -458,18 +662,44 @@ def edge_tts(text: str, gender: str = None) -> str:
 
 # ---- 账号系统（注册 / 登录）----
 def load_users():
-    if not os.path.exists(USERS_FILE):
-        return []
     try:
-        with open(USERS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        db = get_db()
+        try:
+            with db.cursor() as c:
+                c.execute("SELECT username, email, phone, password, avatar, created_at FROM users")
+                rows = c.fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            db.close()
     except Exception:
         return []
 
 
 def save_users(users):
-    with open(USERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(users, f, ensure_ascii=False, indent=2)
+    """全量同步 users 表：upsert 现有用户，删除已不在列表中的用户。"""
+    try:
+        db = get_db()
+        try:
+            with db.cursor() as c:
+                c.execute("SELECT username FROM users")
+                existing = {r["username"] for r in c.fetchall()}
+                incoming = {u.get("username") for u in users}
+                for u in users:
+                    c.execute(
+                        "INSERT INTO users (username, email, phone, password, avatar, created_at) "
+                        "VALUES (%s, %s, %s, %s, %s, %s) "
+                        "ON DUPLICATE KEY UPDATE email=VALUES(email), phone=VALUES(phone), "
+                        "password=VALUES(password), avatar=VALUES(avatar), created_at=VALUES(created_at)",
+                        (u.get("username"), u.get("email"), u.get("phone"),
+                         u.get("password"), u.get("avatar"), u.get("created_at", int(time.time()))))
+                to_delete = existing - incoming
+                if to_delete:
+                    c.executemany("DELETE FROM users WHERE username=%s", [(u,) for u in to_delete])
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        print("save_users error:", e)
 
 
 def hash_pwd(username, password):
@@ -517,10 +747,13 @@ def health():
 def api_announcements():
     """返回活动信息 / 更新公告列表，前端通知面板据此渲染。"""
     try:
-        with open(ANNOUNCEMENTS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        # 按 ts 倒序（最新的在前）
-        data.sort(key=lambda x: x.get("ts", 0), reverse=True)
+        db = get_db()
+        try:
+            with db.cursor() as c:
+                c.execute("SELECT id, type, title, body, ts FROM announcements ORDER BY ts DESC")
+                data = [dict(r) for r in c.fetchall()]
+        finally:
+            db.close()
         return jsonify({"announcements": data})
     except Exception:
         return jsonify({"announcements": []})

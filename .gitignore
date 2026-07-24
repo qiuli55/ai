@@ -46,6 +46,10 @@ nul
 speek/data/users/
 speek/data/bot_avatars/
 speek/split_audio/
+# Migration backup (private conversation JSON exported during JSON -> MySQL)
+speek/backup_json_*/
+# Recovered backend copy (redundant, superseded by MySQL-backed version)
+_backend_main_recovered.py
 
 # Auto-push helper scripts (may contain credentials, not project source)
 push_optimized.py
