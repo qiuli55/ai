@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小诺 NOVA · 数字人对话</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="ambient-bg"></div>
+    <div class="ambient-orb orb-1"></div>
+    <div class="ambient-orb orb-2"></div>
+    <div class="ambient-orb orb-3"></div>
+
+    <div class="app">
+        <!-- =================== Header =================== -->
+        <header class="topbar">
+            <button class="menu-btn" id="menuBtn" title="会话列表" aria-label="会话列表">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+            </button>
+            <a href="/" class="brand">
+                <span class="brand-logo">NOVA</span>
+                <span class="brand-sub">数字人控制台</span>
+            </a>
+
+            <div class="header-actions">
+                <button class="icon-btn" id="notifBtn" title="通知">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg>
+                    <span class="badge" id="notifBadge" hidden>0</span>
+                </button>
+                <button class="icon-btn" id="docBtn" title="文档">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                    <span class="badge" id="docBadge" hidden>0</span>
+                </button>
+                <!-- 登录态：头像按钮 + 下拉菜单（未登录时隐藏，由 JS 控制） -->
+                <div class="user-menu" id="userMenu" hidden>
+                    <button class="user-avatar-btn" id="userAvatarBtn" type="button" aria-haspopup="true" aria-expanded="false">
+                        <img id="userAvatarImg" src="" alt="头像">
+                    </button>
+                    <div class="user-dropdown" id="userDropdown" hidden>
+                        <div class="ud-head">
+                            <img class="ud-avatar" id="udAvatar" src="" alt="">
+                            <div class="ud-meta">
+                                <span class="ud-name" id="udName">用户名</span>
+                                <span class="ud-sub">已登录</span>
+                            </div>
+                        </div>
+                        <button class="ud-item" data-act="switch"><span class="ud-ic">⇄</span>切换用户</button>
+                        <button class="ud-item" data-act="avatar"><span class="ud-ic">🖼</span>更换头像</button>
+                        <button class="ud-item" data-act="password"><span class="ud-ic">🔒</span>修改密码</button>
+                        <button class="ud-item danger" data-act="delete"><span class="ud-ic">⏻</span>注销账号</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 通知面板 -->
+            <div class="dropdown-panel" id="notifPanel" hidden>
+                <div class="dp-head">
+                    <span>通知</span>
+                    <button class="dp-clear" id="notifClear" type="button">全部已读</button>
+                </div>
+                <div class="dp-list" id="notifList">
+                    <div class="dp-empty">暂无通知</div>
+                </div>
+            </div>
+            <!-- 文档面板 -->
+            <div class="dropdown-panel" id="docPanel" hidden>
+                <div class="dp-head">
+                    <span>文档</span>
+                    <span class="dp-sub" id="docConvTitle"></span>
+                </div>
+                <div class="dp-list" id="docList">
+                    <div class="dp-empty">本对话暂无文档</div>
+                </div>
+            </div>
+        </header>
+
+        <!-- =================== Main =================== -->
+        <main class="main">
+            <!-- 左侧：会话列表 -->
+            <aside class="sidebar-left">
+                <button class="new-chat-btn" id="newChatBtn">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                    新建对话
+                </button>
+
+                <div class="search-box">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                    <input type="text" placeholder="搜索对话">
+                </div>
+
+                <div class="section-title">最近</div>
+
+                <ul class="chat-list" id="chatList"></ul>
+
+                <div class="user-mini">
+                    <div class="user-mini-avatar" id="userMiniAvatar"></div>
+                    <div class="user-mini-info">
+                        <div class="user-mini-name">小诺 NOVA</div>
+                        <div class="user-mini-status">二次元数字人 · 在线</div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- 中间：聊天区域 -->
+            <section class="chat-area">
+                <div class="chat-header">
+                    <div class="chat-header-info">
+                        <div class="chat-header-avatar" id="chatHeaderAvatar"></div>
+                        <div>
+                            <div class="chat-header-name" id="chatHeaderName">小诺 NOVA</div>
+                            <div class="chat-header-status" id="avatarStatus">在线 · 多模态就绪</div>
+                        </div>
+                    </div>
+                    <div class="chat-header-actions">
+                        <div class="more-wrap">
+                            <button class="icon-btn" id="moreBtn" title="更多">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle><circle cx="5" cy="12" r="1"></circle></svg>
+                            </button>
+                            <div class="more-dropdown" id="moreDropdown" hidden>
+                                <button class="md-item" data-act="clear">
+                                    <span class="md-ic">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                    </span>
+                                    清除对话
+                                </button>
+                                <button class="md-item" data-act="pin">
+                                    <span class="md-ic">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v20M8 6l4-4 4 4"/></svg>
+                                    </span>
+                                    置顶对话
+                                </button>
+                                <button class="md-item" data-act="tts">
+                                    <span class="md-ic">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+                                    </span>
+                                    <span id="ttsLabel">语音回复</span>
+                                    <span class="md-badge" id="ttsBadge">开</span>
+                                </button>
+                                <button class="md-item" data-act="think">
+                                    <span class="md-ic">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a7 7 0 0 0-7 7c0 2.4 1.2 4.5 3 5.7V18h8v-3.3c1.8-1.2 3-3.3 3-5.7a7 7 0 0 0-7-7z"/><path d="M9 18v2a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-2"/></svg>
+                                    </span>
+                                    <span>深度思考</span>
+                                    <span class="md-badge" id="thinkBadge">关</span>
+                                </button>
+                                <button class="md-item" data-act="font">
+                                    <span class="md-ic">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7V4h16v3"></path><path d="M9 20h6"></path><path d="M12 4v16"></path></svg>
+                                    </span>
+                                    <span>字体大小</span>
+                                    <span class="md-badge" id="fontBadge">中</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="chat-body" id="chatbox">
+                    <div class="date-divider">今天 14:30</div>
+
+                    <div class="message ai">
+                        <div class="msg-avatar" id="msgAvatar1"></div>
+                        <div class="msg-content">
+                            <div class="bubble">
+                                你好，我是你的二次元数字人分身小诺，有什么可以帮你的吗？
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <button class="scroll-bottom-btn" id="scrollBottomBtn" title="回到底部" aria-label="回到底部">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 19 19 12"></polyline></svg>
+                </button>
+
+                <div class="quick-chips" id="quickChips">
+                    <button class="chip">介绍一下你自己</button>
+                    <button class="chip">今天能帮我做什么</button>
+                    <button class="chip">切换成男声</button>
+                    <button class="chip">导出对话记录</button>
+                </div>
+
+                <!-- 附件预览区 -->
+                <div class="attach-preview" id="attachPreview" style="display:none;"></div>
+
+                <div class="input-bar">
+                    <button class="input-tool" id="attachBtn" title="附件（可多选）">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+                    </button>
+                    <textarea id="msg" placeholder="输入消息…（或点右侧麦克风语音输入）" rows="1"></textarea>
+                    <button class="input-tool" id="micBtn" title="语音输入">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+                    </button>
+                    <button id="sendBtn" class="send-btn" title="发送">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                    </button>
+                </div>
+                <input type="file" id="fileInput" multiple hidden>
+            </section>
+
+            <!-- 右侧：数字人名片 -->
+            <aside class="sidebar-right">
+                <div class="section-title">数字人名片</div>
+
+                <div class="profile-card">
+                    <div class="profile-avatar-wrap" id="botAvatarWrap">
+                        <div class="profile-avatar" id="profileAvatar"></div>
+                        <div class="profile-ring"></div>
+                        <div class="profile-avatar-overlay" id="botAvatarOverlay">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+                            <span>更换头像</span>
+                        </div>
+                    </div>
+                    <input type="file" id="botAvatarInput" accept="image/*" hidden>
+
+                    <div class="profile-name">小诺 NOVA</div>
+                    <div class="profile-desc">二次元数字人 · 在线</div>
+
+                    <div class="profile-tags">
+                        <span class="tag tag-cyan">二次元</span>
+                        <span class="tag tag-purple">未来科技</span>
+                        <span class="tag tag-pink">多语言</span>
+                    </div>
+
+                    <div class="profile-stats">
+                        <div class="stat">
+                            <div class="stat-value">1,284</div>
+                            <div class="stat-label">对话轮次</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-value">98%</div>
+                            <div class="stat-label">满意度</div>
+                        </div>
+                    </div>
+
+                    <div class="profile-section-title">核心能力</div>
+                    <ul class="profile-skills">
+                        <li><span class="skill-dot cyan"></span>语音识别</li>
+                        <li><span class="skill-dot purple"></span>多模态交互</li>
+                        <li><span class="skill-dot pink"></span>实时渲染</li>
+                        <li><span class="skill-dot cyan"></span>一键嵌入网页</li>
+                    </ul>
+
+                    <div class="profile-actions">
+                        <button class="btn-outline" id="editProfileBtn">编辑形象</button>
+                        <button class="btn-primary" id="learnCharBtn">重新训练</button>
+                    </div>
+                </div>
+
+                <div class="profile-card character-card">
+                    <div class="section-title" style="margin:0 0 10px; display:flex; align-items:center; gap:8px;">
+                        角色人设
+                        <span class="persona-tag" id="charTag" hidden></span>
+                    </div>
+                    <div class="profile-name" id="charName">小诺</div>
+                    <div class="persona-base" id="charBase" hidden></div>
+                    <div class="profile-desc" id="charProgress">已学习 0 轮</div>
+                    <div class="char-learned" id="charLearned">（暂无学习到的内容，多聊几句让 AI 自动学习）</div>
+                    <div class="profile-actions">
+                        <button class="btn-outline" id="editCharBtn">编辑角色</button>
+                        <button class="btn-outline" id="learnFileBtn" type="button">从文件学习</button>
+                        <input type="file" id="learnFileInput" accept=".txt,.json,.md,.log,.csv" hidden>
+                    </div>
+                </div>
+            </aside>
+        </main>
+    </div>
+
+    <!-- 移动端遮罩 -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <!-- Loading -->
+    <div id="loading" class="loading-mask hide">
+        <div class="loader">
+            <div class="loader-ring"></div>
+            <div class="loader-text">AI 正在思考…</div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="toast">操作成功</div>
+
+    <!-- 角色设定弹窗 -->
+    <div class="modal-mask" id="charModal">
+        <div class="modal">
+            <div class="modal-title">编辑角色人设</div>
+            <label class="modal-label">角色名</label>
+            <input type="text" id="charNameInput" class="modal-input" placeholder="例如：小诺">
+            <label class="modal-label">初始设定（性格 / 身份 / 背景 / 说话风格）</label>
+            <textarea id="charBaseInput" class="modal-textarea" rows="6" placeholder="例如：活泼的二次元少女，喜欢用颜文字，说话俏皮……"></textarea>
+            <div class="modal-actions">
+                <button class="btn-outline" id="charModalCancel">取消</button>
+                <button class="btn-primary" id="charModalSave">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 预设人设选择弹窗 -->
+    <div class="modal-mask" id="presetModal">
+        <div class="modal modal-preset">
+            <div class="modal-title">新建对话 · 选择 AI 人设</div>
+            <div class="preset-list"><!-- 由 JS 动态生成 --></div>
+            <div class="modal-actions">
+                <button class="btn-outline preset-cancel" type="button">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 更换头像弹窗 -->
+    <div class="modal-mask" id="avatarModal">
+        <div class="modal">
+            <div class="modal-title">更换头像</div>
+            <div class="avatar-preview"><img id="avatarPreview" src="" alt="预览"></div>
+            <label class="modal-label">密码验证</label>
+            <input type="password" id="avatarPwd" class="modal-input" placeholder="请输入密码以验证身份" autocomplete="current-password">
+            <div class="modal-err" id="avatarPwdErr"></div>
+            <label class="file-picker">
+                <input type="file" id="avatarInput" accept="image/jpeg,image/png,image/gif,image/webp">
+                <span>选择图片（jpg / png / gif / webp，≤ 3MB）</span>
+            </label>
+            <div class="modal-err" id="avatarErr"></div>
+            <div class="modal-actions">
+                <button class="btn-outline" data-close type="button">取消</button>
+                <button class="btn-primary" id="avatarSave" type="button">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 修改密码弹窗 -->
+    <div class="modal-mask" id="pwdModal">
+        <div class="modal">
+            <div class="modal-title">修改密码</div>
+            <label class="modal-label">当前密码</label>
+            <input type="password" id="pwdOld" class="modal-input" autocomplete="current-password">
+            <div class="modal-err" id="pwdOldErr"></div>
+            <label class="modal-label">新密码</label>
+            <input type="password" id="pwdNew" class="modal-input" placeholder="至少 8 位，含字母与数字" autocomplete="new-password">
+            <div class="modal-err" id="pwdNewErr"></div>
+            <label class="modal-label">确认新密码</label>
+            <input type="password" id="pwdNew2" class="modal-input" autocomplete="new-password">
+            <div class="modal-err" id="pwdNew2Err"></div>
+            <div class="modal-err" id="pwdErr"></div>
+            <div class="modal-actions">
+                <button class="btn-outline" data-close type="button">取消</button>
+                <button class="btn-primary" id="pwdSave" type="button">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 注销账号弹窗 -->
+    <div class="modal-mask" id="delModal">
+        <div class="modal">
+            <div class="modal-title danger">注销账号</div>
+            <p class="modal-desc">此操作将永久删除你的账号与全部数据，且不可恢复。请输入密码确认。</p>
+            <label class="modal-label">密码</label>
+            <input type="password" id="delPwd" class="modal-input" autocomplete="current-password">
+            <div class="modal-err" id="delErr"></div>
+            <div class="modal-actions">
+                <button class="btn-outline" data-close type="button">取消</button>
+                <button class="btn-primary danger" id="delConfirm" type="button">确认注销</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 未登录提示弹窗 -->
+    <div class="modal-mask" id="loginRequiredModal">
+        <div class="modal">
+            <div class="modal-title">需要登录</div>
+            <p class="modal-desc">请先注册或登录账号后，再与 AI 开始聊天。每个账号都拥有独立的记忆库（对话内容、任务个数与 AI 训练成果）。</p>
+            <div class="modal-actions">
+                <button class="btn-outline" id="loginCloseBtn" type="button">稍后再说</button>
+                <button class="btn-primary" id="loginGoBtn" type="button">去注册 / 登录</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 文件预览弹窗 -->
+    <div class="modal-mask" id="fileModal">
+        <div class="modal file-modal">
+            <div class="modal-title" id="fileModalName">文档预览</div>
+            <pre class="file-preview" id="filePreview"></pre>
+            <div class="modal-actions">
+                <a class="btn-outline" id="fileModalDownload" target="_blank" rel="noopener">下载 / 新窗口打开</a>
+                <button class="btn-primary" data-close type="button">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 通知详情弹窗 -->
+    <div class="modal-mask" id="notifModal">
+        <div class="modal notif-modal">
+            <button class="modal-close" data-close type="button" aria-label="关闭">&times;</button>
+            <div class="notif-modal-head">
+                <span class="notif-modal-icon" id="notifModalIcon">📢</span>
+                <h3 class="notif-modal-title" id="notifModalTitle">通知标题</h3>
+            </div>
+            <div class="notif-modal-body" id="notifModalBody">通知内容</div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>
