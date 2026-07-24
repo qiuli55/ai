@@ -7,7 +7,6 @@ import hashlib
 import bcrypt
 import threading
 import shutil
-import asyncio
 import requests
 from flask import Flask, request, jsonify, send_from_directory, Response, redirect
 
@@ -22,7 +21,6 @@ for _pv in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY
 # ---- 路径与常量 ----
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 PROJECT_ROOT = os.path.dirname(BASE_DIR)
-MEMORY_FILE = os.path.join(BASE_DIR, "chat_memory.json")
 CHARACTER_FILE = os.path.join(BASE_DIR, "character_profile.json")
 USERS_FILE = os.path.join(BASE_DIR, "users.json")
 AUTH_DIR = os.path.join(PROJECT_ROOT, "auth")
@@ -121,7 +119,15 @@ def _set_persona(username, persona, conversation_id=None):
             return
     save_user_profile(username, persona)
 
+# ---- 内存级记忆缓存（减少磁盘IO）----
+_memory_cache = {}  # username -> (timestamp, data)
+_MEMORY_CACHE_TTL = 2.0  # 秒
+
 def load_user_memory(username):
+    now = time.time()
+    cached = _memory_cache.get(username)
+    if cached and (now - cached[0]) < _MEMORY_CACHE_TTL:
+        return cached[1]
     path = user_memory_path(username)
     try:
         if os.path.exists(path):
@@ -136,10 +142,13 @@ def load_user_memory(username):
             for c in data.get("conversations", []):
                 ensure_persona(c)
             data["task_count"] = len(data.get("conversations", []))
+            _memory_cache[username] = (now, data)
             return data
     except Exception:
         pass
-    return _default_memory()
+    data = _default_memory()
+    _memory_cache[username] = (now, data)
+    return data
 
 def save_user_memory(username, data):
     data = dict(data)
@@ -148,6 +157,7 @@ def save_user_memory(username, data):
     path = user_memory_path(username)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+    _memory_cache[username] = (time.time(), data)  # 更新缓存
 
 def update_user_memory(username, patch):
     mem = load_user_memory(username)
@@ -193,6 +203,7 @@ OLLAMA_MODEL_DEEP = os.environ.get("OLLAMA_MODEL_DEEP", "qwen3:4b")
 OLLAMA_MODEL_FAST = os.environ.get("OLLAMA_MODEL_FAST", "qwen3:4b")
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 全局请求体上限 25MB
 
 
 # ---- 通用 ----
@@ -206,35 +217,13 @@ def no_cache(response):
 
 
 # ---- 记忆文件 ----
-def init_memory_file():
-    if not os.path.exists(MEMORY_FILE):
-        with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-            json.dump([], f, ensure_ascii=False, indent=2)
-
-
-def load_memory():
-    init_memory_file()
-    with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def save_memory(user_text, bot_text):
-    memory = load_memory()
-    memory.append({"user": user_text, "bot": bot_text})
-    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(memory, f, ensure_ascii=False, indent=2)
-
-
 def load_chat_history():
     path = os.path.join(BASE_DIR, "chat_history.txt")
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return f"【历史聊天样本】\n{f.read()}"
+            return f.read()
     except Exception:
         return "暂无聊天记录"
-
-
-history_content = load_chat_history()
 
 
 # ---- 角色画像（从聊天记录学习人设，按账号隔离）----
@@ -438,6 +427,7 @@ EDGE_TTS_VOICES = {
 def edge_tts(text: str, gender: str = None) -> str:
     """使用 Edge TTS 生成语音，返回保存的文件路径"""
     try:
+        import asyncio
         import edge_tts as et
         fname = str(uuid.uuid4()) + ".mp3"
         save_path = os.path.join(TEMP_AUDIO_DIR, fname)
@@ -1421,7 +1411,7 @@ def home_static(filename):
     return send_from_directory(HOME_DIR, filename)
 
 
-# ---- 启动时清理过期音频 ----
+# ---- 启动时清理过期音频（后台线程，不阻塞启动）----
 def clean_audio():
     expire = 3 * 3600
     now = time.time()
@@ -1434,7 +1424,7 @@ def clean_audio():
                 pass
 
 
-clean_audio()
+threading.Thread(target=clean_audio, daemon=True).start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=7860, debug=False, threaded=True)
