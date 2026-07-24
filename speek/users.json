@@ -1,0 +1,24 @@
+[
+  {
+    "username": "qiuli",
+    "email": "2709264162@qq.com",
+    "phone": "13158930446",
+    "password": "871243a6f53839ea336482b292fd732c0dc66c40d3d72f0a30ce794eb6c3dbf6",
+    "created_at": 1784679198
+  },
+  {
+    "username": "qiuli55",
+    "email": "1005941903@qq.com",
+    "phone": "19553965073",
+    "password": "6a676b75d45af620ca2847caa0b5f798924a093be025ec68d8b6f4a14a76ecf0",
+    "created_at": 1784731106,
+    "avatar": "/avatars/a9b84d9503fb48d28de620daaad95c07.jpg"
+  },
+  {
+    "username": "QIULIGAO",
+    "email": "475446428@qq.com",
+    "phone": "13395995064",
+    "password": "375ac155e6966691c956ad54d9d4c6aadae71022ef97efae14bf8f569644682a",
+    "created_at": 1784731325
+  }
+]
