@@ -387,81 +387,13 @@ ARK_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
 # 语音转文字使用的音频理解模型（需在方舟控制台开通）。可用 ARK_ASR_MODEL 环境变量覆盖。
 ASR_MODEL_ID = os.environ.get("ARK_ASR_MODEL", "ep-m-20260723034312-t27x7")
 
-# ---- LLM 路由：普通聊天走本地 OmniRoute 网关，深度思考走火山 ARK，不再直连 Ollama ----
-# OmniRoute 网关（OpenAI 兼容，监听 :20128）。普通聊天经此网关；深度思考单独走 ARK（能力强、稳定）。
-# 网关模型名带前缀：opencode-zen/big-pickle（OpenCode 内置免 key，最稳）、opencode/<model>-free 等。
-# 策略（2026-07-25 调整，用户要求）：
-#   · 平时对话固定用 OMNIROUTE_MODEL（big-pickle，稳定优先）
-#   · 用户要「生成文件/代码」时，按 OMNIROUTE_FILE_MODELS 顺序逐个试，首个产出 <<<FILE: 即用；
-#     都不产出则回退到 OMNIROUTE_MODEL。
-# 环境变量覆盖：
-#   OMNIROUTE_URL          网关地址（默认 http://127.0.0.1:20128/v1/chat/completions）
-#   OMNIROUTE_KEY          网关密钥（默认 CHANGEME，与 OmniRoute 后台一致）
-#   OMNIROUTE_MODEL        普通聊天固定模型（默认 opencode-zen/big-pickle）
-#   OMNIROUTE_FILE_MODELS  文件生成时挨个试的强模型链（逗号分隔）
-#   OMNIROUTE_COOLDOWN     触发限流后该模型的冷却秒数，默认 60
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "omniroute").lower()
-OMNIROUTE_URL = os.environ.get("OMNIROUTE_URL", "http://127.0.0.1:20128/v1/chat/completions")
-# OmniRoute 总开关：设为 false/0/no/off 可完全禁用 OmniRoute，聊天与文件生成直接走本地 qwen3:4b 兜底。
-# 默认开启（true）。禁用后行为与「OmniRoute 网关整体不可达」一致，但无需等待连接超时。
-OMNIROUTE_ENABLED = os.environ.get("OMNIROUTE_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")
-OMNIROUTE_KEY = os.environ.get("OMNIROUTE_KEY", "CHANGEME")
-OMNIROUTE_COOLDOWN = int(os.environ.get("OMNIROUTE_COOLDOWN", "60"))
-# 普通聊天固定模型（稳定优先）
-OMNIROUTE_MODEL = (os.environ.get("OMNIROUTE_MODEL") or "opencode-zen/big-pickle").strip() or "opencode-zen/big-pickle"
-# 文件生成时依次尝试的强模型链（首个产出 <<<FILE: 即用，都不产出则回退 OMNIROUTE_MODEL）
-_file_models_env = os.environ.get("OMNIROUTE_FILE_MODELS", "").strip()
-if _file_models_env:
-    OMNIROUTE_FILE_MODELS = [m.strip() for m in _file_models_env.split(",") if m.strip()]
-else:
-    OMNIROUTE_FILE_MODELS = ["opencode/mimo-v2.5-free", "opencode/north-mini-code-free", "opencode/nemotron-3-ultra-free"]
-# 兼容旧字段（本策略不再使用，仅保留以兼容可能直接引用 OMNIROUTE_MODELS 的代码）
-_models_env = os.environ.get("OMNIROUTE_MODELS", "").strip()
-OMNIROUTE_MODELS = [m.strip() for m in _models_env.split(",") if m.strip()] if _models_env else [OMNIROUTE_MODEL]
-
-# ---- 本地兜底：当 OmniRoute 网关整体不可达（连接失败/超时）时，回退到本地 Ollama ----
-# 走 Ollama 的 OpenAI 兼容接口（默认 127.0.0.1:11434）。模型默认 qwen3:4b（本地已拉取，4B Q4）。
-# 仅作为「OmniRoute 全部挂掉」时的应急，不进日常 fallback 链（日常仍优先 big-pickle / 强模型文件链）。
+# ---- LLM 路由：普通聊天 + 文件生成走本地 Ollama（qwen3:4b），深度思考走火山 ARK ----
+# 本地 Ollama（OpenAI 兼容接口，默认 127.0.0.1:11434）。模型默认 qwen3:4b（本地已拉取，4B Q4）。
 LOCAL_LLM_URL = os.environ.get("LOCAL_LLM_URL", "http://127.0.0.1:11434/v1/chat/completions")
 LOCAL_LLM_MODEL = os.environ.get("LOCAL_LLM_MODEL", "qwen3:4b")
 
-# 模型级限流冷却表：{model_name: cooldown_until_timestamp}。命中 403/429/insufficient_quota 即写入。
-_omni_cooldown_until = {}  # type: dict[str, float]
 
-def _is_rate_limited_error(status_code: int, body_text: str) -> bool:
-    """判断响应是否限流/欠费——这类错误应立即切下一个模型而不是重试同一模型。"""
-    if status_code in (403, 429):
-        return True
-    if status_code >= 500:
-        return True
-    if not body_text:
-        return False
-    low = body_text.lower()
-    return any(k in low for k in ("insufficient_quota", "rate_limit", "rate limit",
-                                  "quota_exceeded", "too many requests", "empty response",
-                                  "bad_gateway"))
-
-def _pick_omni_model() -> str | None:
-    """按顺序挑第一个不在冷却期的模型；全在冷却期则等最短那个到期再返回它。返回 None 表示链路为空。"""
-    import time as _t
-    now = _t.time()
-    for m in OMNIROUTE_MODELS:
-        if _omni_cooldown_until.get(m, 0) <= now:
-            return m
-    # 全部冷却 → 选最快到期的
-    soonest = min(OMNIROUTE_MODELS, key=lambda m: _omni_cooldown_until.get(m, 0))
-    return soonest  # 调用方拿到后应 sleep 到期
-
-def _mark_rate_limited(model: str):
-    import time as _t
-    _omni_cooldown_until[model] = _t.time() + OMNIROUTE_COOLDOWN
-
-def _cooldown_sleep_needed(model: str) -> float:
-    """返回还需等多少秒该模型才解冻（≤0 表示可立即用）。"""
-    import time as _t
-    return max(0.0, _omni_cooldown_until.get(model, 0) - _t.time())
-
-# ---- 「生成文件」意图识别 + 强模型逐个试，直到产出 <<<FILE: ----
+# ---- 「生成文件」意图识别：命中则用本地 Ollama 生成，解析 <<<FILE: 落盘 ----
 _FILE_GEN_TRIGGERS = [
     "生成文件", "写文件", "创建文件", "输出文件", "输出一个文件", "导出文件", "给我一个文件",
     "生成一份", "写一份", "创建一份", "写个", "写一个", "做一个",
@@ -490,65 +422,6 @@ def _is_file_gen_request(text):
     if _FILE_EXT_RE.search(text):
         return True
     return False
-
-def _probe_omni_buffered(model_name, messages):
-    """缓冲式请求一个 OmniRoute 模型，完整拿到回复再返回（不立即流式发给前端）。
-    返回 (full_text, actual_model, ok, conn_failed)。
-      ok=False 表示限流/错误（无有效内容）；
-      conn_failed=True 表示网关连不上/超时（即 OmniRoute 整体不可达，应触发本地兜底）。"""
-    payload = {
-        "model": model_name,
-        "messages": messages,
-        "temperature": 0.8,
-        "max_tokens": 1024,
-        "stream": True,
-    }
-    headers = {"Authorization": f"Bearer {OMNIROUTE_KEY}", "Content-Type": "application/json"}
-    try:
-        r = requests.post(OMNIROUTE_URL, json=payload, headers=headers, stream=True, timeout=300)
-    except Exception:
-        # 连接失败/超时 = 网关整体不可达
-        return "", None, False, True
-    if r.status_code != 200:
-        err = r.text[:400].replace("\n", " ")
-        if _is_rate_limited_error(r.status_code, err):
-            _mark_rate_limited(model_name)
-        return "", None, False, False
-    full = ""
-    actual = None
-    try:
-        for line in r.iter_lines():
-            if not line:
-                continue
-            text = line.decode("utf-8", errors="replace")
-            if not text.startswith("data:"):
-                continue
-            if "[DONE]" in text:
-                break
-            raw = text[len("data:"):].strip()
-            if not raw:
-                continue
-            try:
-                obj = json.loads(raw)
-            except Exception:
-                return full, actual, bool(full), False
-            if actual is None and obj.get("model"):
-                actual = obj["model"]
-            if obj.get("error"):
-                err = obj["error"]
-                msg = err.get("message") if isinstance(err, dict) else str(err)
-                if _is_rate_limited_error(200, msg):
-                    _mark_rate_limited(model_name)
-                return full, actual, bool(full), False
-            try:
-                tok = obj["choices"][0]["delta"].get("content", "")
-            except Exception:
-                return full, actual, bool(full), False
-            if tok:
-                full += tok
-        return full, actual, True, False
-    except Exception:
-        return full, actual, bool(full), False
 
 def _ollama_request(messages):
     """向本地 Ollama 发一次缓冲式请求，返回 (full, actual, ok)。"""
@@ -599,8 +472,8 @@ def _ollama_request(messages):
 
 
 def _call_local_buffered(messages):
-    """本地 Ollama 兜底（应急）：缓冲式请求 LOCAL_LLM_MODEL，返回 (full, actual, ok)。
-    仅当 OmniRoute 整体不可达时调用。自动剥离 qwen3 的 <think>...</think> 思维链，只留正式回复。
+    """本地 Ollama（普通聊天 + 文件生成主用）：缓冲式请求 LOCAL_LLM_MODEL，返回 (full, actual, ok)。
+    自动剥离 qwen3 的 <think>...</think> 思维链，只留正式回复。
     若带 system 人设的请求被本地模型拒（400 等），自动降级重试：去掉 system，仅留 user/assistant。"""
     full, actual, ok = _ollama_request(messages)
     if ok:
@@ -621,36 +494,16 @@ def _call_local_buffered(messages):
 
 
 def _try_file_models(messages, username):
-    """文件生成：依次用 OMNIROUTE_FILE_MODELS 缓冲请求，返回首个「真正落盘成功」的
-    (clean_text, gen_files, actual_model, model_name, omni_dead)。
-      omni_dead=True 表示 OmniRoute 网关整体不可达（所有文件模型都连不上），
-      此时会再试本地 LOCAL_LLM_MODEL 兜底（同样要求真落盘才算）。
-    只有 extract_and_save_files 实际解析出文件才算命中（避免模型只甩个格式示例 / 危险后缀被拦截时误判为已生成）。
-    命中的限流会写入冷却表。"""
-    omni_dead = False
-    for fm in OMNIROUTE_FILE_MODELS:
-        wait_s = _cooldown_sleep_needed(fm)
-        if wait_s > 0:
-            time.sleep(wait_s)
-        text, actual, ok, conn_failed = _probe_omni_buffered(fm, messages)
-        if conn_failed:
-            # 连不上 = 网关整体不可达
-            omni_dead = True
-            continue
-        if not ok:
-            continue
-        # 必须真能落盘才算数（验证扩展名白名单 / 大小 / 格式完整）
-        clean, gen_files = extract_and_save_files(text, username)
+    """文件生成：直接走本地 Ollama（LOCAL_LLM_MODEL），返回首个「真正落盘成功」的
+    (clean_text, gen_files, actual_model, model_name, fell_back)。
+      fell_back 恒为 False（本地即主用，无回退）。
+    只有 extract_and_save_files 实际解析出文件才算命中（避免模型只甩个格式示例 / 危险后缀被拦截时误判为已生成）。"""
+    lf, la, lok = _call_local_buffered(messages)
+    if lok:
+        clean, gen_files = extract_and_save_files(lf, username)
         if gen_files:
-            return clean, gen_files, (actual or fm), fm, False
-    # OmniRoute 整体不可达 → 本地 qwen3:4b 兜底（同样要求真落盘）
-    if omni_dead:
-        lf, la, lok = _call_local_buffered(messages)
-        if lok:
-            clean, gen_files = extract_and_save_files(lf, username)
-            if gen_files:
-                return clean, gen_files, (la or LOCAL_LLM_MODEL), f"Local({LOCAL_LLM_MODEL})", False
-    return None, None, None, None, omni_dead
+            return clean, gen_files, (la or LOCAL_LLM_MODEL), f"Local({LOCAL_LLM_MODEL})", False
+    return None, None, None, None, False
 
 def _postprocess(full, actual_model, used_label, fell_back, deep_think, username, conversation_id, messages, pre_files=None):
     """统一后处理（生成器）：解析 AI 文件、推送 files 事件、model 路由标签、写入 ROUTING_HISTORY、触发画像增量学习。
@@ -660,13 +513,13 @@ def _postprocess(full, actual_model, used_label, fell_back, deep_think, username
     else:
         gen_files = pre_files
     if not full and not gen_files:
-        yield f"data:{json.dumps({'error': f'{used_label} 返回了空内容（HTTP 200 但无任何文本）。若走 OmniRoute 网关，请确认龙猫云节点已开（代理 127.0.0.1:7892 可达）；若走 ARK，请确认接入点与密钥状态。'}, ensure_ascii=False)}\n\n"
+        yield f"data:{json.dumps({'error': f'{used_label} 返回了空内容（HTTP 200 但无任何文本）。若走本地 Ollama，请确认 Ollama(11434) 已运行；若走 ARK，请确认接入点与密钥状态。'}, ensure_ascii=False)}\n\n"
         return
     if gen_files:
         yield f"data:{json.dumps({'type': 'files', 'text': full, 'files': gen_files}, ensure_ascii=False)}\n\n"
     _routing_label = actual_model or used_label
     try:
-        yield f"data:{json.dumps({'type': 'model', 'label': _routing_label, 'backend': 'ark' if deep_think else 'omniroute', 'fell_back': fell_back}, ensure_ascii=False)}\n\n"
+        yield f"data:{json.dumps({'type': 'model', 'label': _routing_label, 'backend': 'ark' if deep_think else 'local', 'fell_back': fell_back}, ensure_ascii=False)}\n\n"
     except Exception:
         pass
     try:
@@ -678,7 +531,7 @@ def _postprocess(full, actual_model, used_label, fell_back, deep_think, username
             "time": time.strftime("%H:%M:%S", time.localtime()),
             "user": username,
             "q": _q,
-            "backend": "ark" if deep_think else "omniroute",
+            "backend": "ark" if deep_think else "local",
             "config_model": used_label,
             "actual_model": actual_model or "(unknown)",
             "label": _routing_label,
@@ -1260,96 +1113,31 @@ def api_chat():
         messages.append({"role": "assistant", "content": item[1]})
     messages.append({"role": "user", "content": user_msg})
     def generate():
-        # 路由：深度思考走火山 ARK（单模型直通，不 fallback）；普通聊天走本地 OmniRoute 网关
+        # 路由：深度思考走火山 ARK（单模型直通，不 fallback）；普通聊天 + 文件生成走本地 Ollama（qwen3:4b）
         if deep_think:
+            # ---- 深度思考：火山 ARK 流式 ----
             if not ARK_CONFIGURED:
                 yield f"data:{json.dumps({'error': '后端未配置 ARK_API_KEY：请在 backend.py 第189行改为真实密钥，或设置环境变量 ARK_API_KEY 后重启后端。'}, ensure_ascii=False)}\n\n"
                 return
-            llm_url = ARK_URL
-            llm_key = ARK_API_KEY
-            llm_model = CHAT_MODEL_ID
-            llm_label = "ARK(深度思考)"
-            candidates = [llm_model]
-        else:
-            # 1) 是否「生成文件/代码」请求？是则用强模型链逐个试，直到产出 <<<FILE:
-            last_user = _last_user_text(messages)
-            if _is_file_gen_request(last_user):
-                if not OMNIROUTE_ENABLED:
-                    # OmniRoute 已禁用：直接走本地 qwen3:4b 兜底（同样要求真落盘才算）
-                    lf, la, lok = _call_local_buffered(messages)
-                    if lok:
-                        clean, gen_files = extract_and_save_files(lf, username)
-                        if gen_files:
-                            yield from _postprocess(clean, la, f"Local({LOCAL_LLM_MODEL})", True, False, username, conversation_id, messages, pre_files=gen_files)
-                        else:
-                            if clean:
-                                yield f"data:{json.dumps({'text': clean}, ensure_ascii=False)}\n\n"
-                            yield from _postprocess(clean, la, f"Local({LOCAL_LLM_MODEL})", True, False, username, conversation_id, messages, pre_files=[])
-                        return
-                    yield f"data:{json.dumps({'error': f'本地兜底({LOCAL_LLM_MODEL} @ {LOCAL_LLM_URL}) 失败。OmniRoute 已禁用，请检查本地 Ollama(11434) 是否运行。'}, ensure_ascii=False)}\n\n"
-                    return
-                ft, gen_files, fa, fn, omni_dead = _try_file_models(messages, username)
-                if ft is not None:
-                    fell_back = bool(OMNIROUTE_FILE_MODELS) and fn != OMNIROUTE_FILE_MODELS[0]
-                    yield from _postprocess(ft, fa, fn or OMNIROUTE_MODEL, fell_back, False, username, conversation_id, messages, pre_files=gen_files)
-                    return
-            # 2) 普通聊天：固定用 OMNIROUTE_MODEL（big-pickle），稳定优先
-            llm_url = OMNIROUTE_URL
-            llm_key = OMNIROUTE_KEY
-            llm_model = OMNIROUTE_MODEL
-            llm_label = f"OmniRoute({llm_model})"
-            candidates = [llm_model]
-            omni_unreachable = False  # OmniRoute 网关整体连不上（连接/超时）时置 True，触发本地兜底
-            if not OMNIROUTE_ENABLED:
-                # OmniRoute 已禁用：跳过候选，直接进入本地 qwen3:4b 兜底分支
-                omni_unreachable = True
-                candidates = []
-
-        payload = {
-            "model": llm_model,
-            "messages": messages,
-            "temperature": 0.8,
-            "max_tokens": 2048 if deep_think else 1024,
-            "stream": True,
-        }
-        headers = {
-            "Authorization": f"Bearer {llm_key}",
-            "Content-Type": "application/json",
-        }
-
-        # ---- 流式调用（普通聊天固定单模型；深度思考单模型）----
-        actual_model = None
-        full = ""
-        last_err = ""
-        used_label = llm_label
-        for idx, model_name in enumerate(candidates):
-            used_label = f"OmniRoute({model_name})" if not deep_think else f"ARK({model_name})"
-            # 若该模型仍在限流冷却期，跳到下一个（但若是链中最后一个则等待）
-            wait_s = _cooldown_sleep_needed(model_name)
-            if wait_s > 0 and idx < len(candidates) - 1:
-                continue
-            if wait_s > 0 and idx == len(candidates) - 1:
-                # 全链冷却中：等最短那个到期
-                time.sleep(wait_s)
-            payload["model"] = model_name
+            payload = {
+                "model": CHAT_MODEL_ID,
+                "messages": messages,
+                "temperature": 0.8,
+                "max_tokens": 2048,
+                "stream": True,
+            }
+            headers = {"Authorization": f"Bearer {ARK_API_KEY}", "Content-Type": "application/json"}
             try:
-                r = requests.post(llm_url, json=payload, headers=headers, stream=True, timeout=300)
+                r = requests.post(ARK_URL, json=payload, headers=headers, stream=True, timeout=300)
             except Exception as e:
-                # 连接失败/超时 = OmniRoute 网关整体不可达，应触发本地兜底
-                omni_unreachable = True
-                last_err = f"{used_label} 请求异常：{e}"
-                continue
+                yield f"data:{json.dumps({'error': f'ARK 请求异常：{e}'}, ensure_ascii=False)}\n\n"
+                return
             if r.status_code != 200:
                 err_body = r.text[:400].replace("\n", " ")
-                if _is_rate_limited_error(r.status_code, err_body):
-                    _mark_rate_limited(model_name)
-                    last_err = f"{used_label} 限流（HTTP {r.status_code}），{OMNIROUTE_COOLDOWN}s 后重试"
-                    continue
-                # 非限流错误：直接返回（不切下一个，避免静默换模型掩盖问题）
-                yield f"data:{json.dumps({'error': f'{used_label} 返回错误（HTTP {r.status_code}）：{err_body}'}, ensure_ascii=False)}\n\n"
+                yield f"data:{json.dumps({'error': f'ARK 返回错误（HTTP {r.status_code}）：{err_body}'}, ensure_ascii=False)}\n\n"
                 return
-            # 200：进入流式读取
-            got_any_token = False
+            actual_model = None
+            full = ""
             stream_ok = True
             try:
                 for line in r.iter_lines():
@@ -1366,7 +1154,7 @@ def api_chat():
                     try:
                         obj = json.loads(raw)
                     except Exception as e:
-                        yield f"data:{json.dumps({'error': f'{used_label} 返回无法解析的数据：{e}；原文前200字：{raw[:200]}'}, ensure_ascii=False)}\n\n"
+                        yield f"data:{json.dumps({'error': f'ARK 返回无法解析的数据：{e}；原文前200字：{raw[:200]}'}, ensure_ascii=False)}\n\n"
                         stream_ok = False
                         break
                     if actual_model is None and obj.get("model"):
@@ -1374,70 +1162,53 @@ def api_chat():
                     if obj.get("error"):
                         err = obj["error"]
                         msg = err.get("message") if isinstance(err, dict) else str(err)
-                        # 流中途的 error 视为限流
-                        if _is_rate_limited_error(200, msg):
-                            _mark_rate_limited(model_name)
-                            last_err = f"{used_label} 流中限流：{msg[:120]}"
-                            stream_ok = False
-                            break
-                        yield f"data:{json.dumps({'error': f'{used_label} 返回错误：{msg}'}, ensure_ascii=False)}\n\n"
+                        yield f"data:{json.dumps({'error': f'ARK 返回错误：{msg}'}, ensure_ascii=False)}\n\n"
                         stream_ok = False
                         break
                     try:
                         token = obj["choices"][0]["delta"].get("content", "")
                     except Exception as e:
-                        yield f"data:{json.dumps({'error': f'{used_label} 返回结构异常：{e}；原文前200字：{raw[:200]}'}, ensure_ascii=False)}\n\n"
+                        yield f"data:{json.dumps({'error': f'ARK 返回结构异常：{e}；原文前200字：{raw[:200]}'}, ensure_ascii=False)}\n\n"
                         stream_ok = False
                         break
                     if token:
-                        got_any_token = True
                         full += token
                         yield f"data:{json.dumps({'text': token}, ensure_ascii=False)}\n\n"
             except Exception as e:
-                yield f"data:{json.dumps({'error': f'{used_label} 流读取异常：{e}'}, ensure_ascii=False)}\n\n"
+                yield f"data:{json.dumps({'error': f'ARK 流读取异常：{e}'}, ensure_ascii=False)}\n\n"
                 stream_ok = False
-            if not stream_ok:
-                # 已 yield error 或被限流切走；如已拿到部分 token 也直接终止（用户能看到已生成内容）
-                if got_any_token:
-                    # 已有部分输出，补一个 done 标记
-                    return
-                continue
-            # 流正常结束
-            if got_any_token:
-                break
-            # 200 但 0 token：可能上游"empty response"，视为限流切下一个
-            _mark_rate_limited(model_name)
-            last_err = f"{used_label} 200 但无任何 token（empty response），切下一个"
-            continue
-        else:
-            # 全部候选走完都没拿到 token
-            if full:
-                pass  # 前面 while 中已 break 不会到这里
-            else:
-                # OmniRoute 网关整体不可达（连接失败/超时）→ 本地 qwen3:4b 兜底
-                if omni_unreachable:
-                    lf, la, lok = _call_local_buffered(messages)
-                    if lok:
-                        # _postprocess 只补 files 事件 + model 标签，不 yield 普通文本；
-                        # 本地兜底绕过了主循环的逐字流式，需先手动把正文推给前端。
-                        clean, gen_files = extract_and_save_files(lf, username)
-                        if gen_files:
-                            yield from _postprocess(clean, la, f"Local({LOCAL_LLM_MODEL})", True, False,
-                                                    username, conversation_id, messages, pre_files=gen_files)
-                        else:
-                            if clean:
-                                yield f"data:{json.dumps({'text': clean}, ensure_ascii=False)}\n\n"
-                            yield from _postprocess(clean, la, f"Local({LOCAL_LLM_MODEL})", True, False,
-                                                    username, conversation_id, messages, pre_files=[])
-                        return
-                    yield f"data:{json.dumps({'error': f'所有 OmniRoute 模型都不可达，且本地兜底({LOCAL_LLM_MODEL} @ {LOCAL_LLM_URL}) 也失败。请检查 OmniRoute 网关(20128)与本地 Ollama(11434) 是否运行。'}, ensure_ascii=False)}\n\n"
-                    return
-                detail = last_err or "无可用模型"
-                yield f"data:{json.dumps({'error': f'所有 OmniRoute 模型都失败：{detail}。请稍候重试，或检查 OMNIROUTE_MODELS 配置。'}, ensure_ascii=False)}\n\n"
+            if stream_ok and not full:
+                yield f"data:{json.dumps({'error': 'ARK 未返回任何内容，请稍候重试或检查接入点与密钥状态。'}, ensure_ascii=False)}\n\n"
                 return
+            if full:
+                yield from _postprocess(full, actual_model, f"ARK({actual_model or CHAT_MODEL_ID})", False, True, username, conversation_id, messages)
+            return
 
-        # ---- 统一后处理（解析文件 / 推送事件 / 路由标签 / 画像学习）----
-        yield from _postprocess(full, actual_model, used_label, False, deep_think, username, conversation_id, messages)
+        # ---- 普通聊天 + 文件生成：本地 Ollama（qwen3:4b，缓冲式）----
+        last_user = _last_user_text(messages)
+        if _is_file_gen_request(last_user):
+            ft, gen_files, fa, fn, _fb = _try_file_models(messages, username)
+            if ft is not None:
+                yield from _postprocess(ft, fa, fn or f"Local({LOCAL_LLM_MODEL})", False, False, username, conversation_id, messages, pre_files=gen_files)
+                return
+            # 本地没产出文件：把正文当普通回复返回
+            lf, la, lok = _call_local_buffered(messages)
+            if lok:
+                clean, gf = extract_and_save_files(lf, username)
+                if clean:
+                    yield f"data:{json.dumps({'text': clean}, ensure_ascii=False)}\n\n"
+                yield from _postprocess(clean, la, f"Local({LOCAL_LLM_MODEL})", False, False, username, conversation_id, messages, pre_files=gf)
+                return
+            yield f"data:{json.dumps({'error': f'本地 Ollama({LOCAL_LLM_MODEL} @ {LOCAL_LLM_URL}) 未返回内容，请检查 Ollama(11434) 是否运行。'}, ensure_ascii=False)}\n\n"
+            return
+        # 普通聊天：直接走本地 Ollama
+        lf, la, lok = _call_local_buffered(messages)
+        if lok:
+            yield f"data:{json.dumps({'text': lf}, ensure_ascii=False)}\n\n"
+            yield from _postprocess(lf, la, f"Local({LOCAL_LLM_MODEL})", False, False, username, conversation_id, messages)
+            return
+        yield f"data:{json.dumps({'error': f'本地 Ollama({LOCAL_LLM_MODEL} @ {LOCAL_LLM_URL}) 未返回内容，请检查 Ollama(11434) 是否运行。'}, ensure_ascii=False)}\n\n"
+        return
 
     return Response(
         generate(),
@@ -1445,55 +1216,6 @@ def api_chat():
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
-
-def _quick_test_model(model_name):
-    """对单个 OmniRoute 模型做一次短流式探测，返回 (status, reply, actual)。
-    用 stream=True 累积（OmniRoute 对 stream=False 会返回 empty response）。"""
-    payload = {"model": model_name,
-               "messages": [{"role": "user", "content": "你好，请只回复两个字：在的"}],
-               "temperature": 0.5, "max_tokens": 50, "stream": True}
-    headers = {"Authorization": f"Bearer {OMNIROUTE_KEY}", "Content-Type": "application/json"}
-    try:
-        r = requests.post(OMNIROUTE_URL, json=payload, headers=headers, stream=True, timeout=60)
-    except Exception as e:
-        return None, "", str(e)[:120]
-    if r.status_code != 200:
-        if _is_rate_limited_error(r.status_code, r.text[:400]):
-            _mark_rate_limited(model_name)
-        return r.status_code, "", r.text[:200]
-    full = ""; actual = None
-    try:
-        for line in r.iter_lines():
-            if not line:
-                continue
-            t = line.decode("utf-8", errors="replace")
-            if not t.startswith("data:"):
-                continue
-            if "[DONE]" in t:
-                break
-            raw = t[len("data:"):].strip()
-            if not raw:
-                continue
-            try:
-                obj = json.loads(raw)
-            except Exception:
-                continue
-            if actual is None and obj.get("model"):
-                actual = obj["model"]
-            if obj.get("error"):
-                msg = obj["error"].get("message") if isinstance(obj["error"], dict) else str(obj["error"])
-                if _is_rate_limited_error(200, msg):
-                    _mark_rate_limited(model_name)
-                return 200, full, actual
-            try:
-                tok = obj["choices"][0]["delta"].get("content", "")
-            except Exception:
-                continue
-            if tok:
-                full += tok
-        return 200, full, actual
-    except Exception:
-        return 200, full, actual
 
 def _quick_test_local():
     """探测本地兜底模型（Ollama）是否可达，返回 (status, note)。"""
@@ -1511,50 +1233,31 @@ def _quick_test_local():
 
 @app.route("/api/llm-test")
 def api_llm_test():
-    """诊断当前普通聊天后端（OmniRoute 网关）。
-    普通聊天固定模型 = OMNIROUTE_MODEL（big-pickle）；文件生成链 = OMNIROUTE_FILE_MODELS。
-    依次测普通模型 + 每个文件模型，并探测本地兜底（OmniRoute 整体不可达时启用）。
+    """诊断当前普通聊天后端（本地 Ollama）。
+    普通聊天 + 文件生成均走本地 Ollama（LOCAL_LLM_MODEL，默认 qwen3:4b）。
     深度思考走 ARK 见 /api/ark-test。"""
-    results = []
-    if not OMNIROUTE_ENABLED:
-        results.append({"role": "omni", "model": "(disabled)", "http_status": "skipped",
-                       "reply": "OmniRoute 已禁用（OMNIROUTE_ENABLED=false），聊天与文件生成直接走本地 qwen3:4b 兜底。",
-                       "actual": None, "rate_limited": False})
-    else:
-        # 1) 普通聊天模型
-        nm = OMNIROUTE_MODEL
-        cd = _cooldown_sleep_needed(nm)
-        if cd > 0:
-            time.sleep(cd)
-        nm_status, nm_reply, nm_actual = _quick_test_model(nm)
-        results.append({"role": "normal", "model": nm, "http_status": nm_status, "reply": nm_reply,
-                       "actual": nm_actual,
-                       "rate_limited": nm_status in (403, 429) or (isinstance(nm_status, int) and nm_status >= 500)})
-        # 2) 文件生成链
-        for fm in OMNIROUTE_FILE_MODELS:
-            cdf = _cooldown_sleep_needed(fm)
-            if cdf > 0:
-                time.sleep(cdf)
-            st, rep, act = _quick_test_model(fm)
-            results.append({"role": "file", "model": fm, "http_status": st, "reply": rep,
-                           "actual": act,
-                           "rate_limited": st in (403, 429) or (isinstance(st, int) and st >= 500)})
-    # 3) 本地兜底探测（禁用 OmniRoute 时它正是主用模型，无论如何都探测）
+    # 探测本地 Ollama 是否可达
     ls, ln = _quick_test_local()
     return jsonify({
-        "provider": "omniroute",
-        "omni_enabled": OMNIROUTE_ENABLED,
-        "normal_model": OMNIROUTE_MODEL,
-        "file_models": OMNIROUTE_FILE_MODELS,
-        "cooldown_seconds": OMNIROUTE_COOLDOWN,
-        "local_fallback": {
+        "provider": "local",
+        "mode": "ollama",
+        "normal_model": LOCAL_LLM_MODEL,
+        "file_models": [LOCAL_LLM_MODEL],
+        "local": {
             "model": LOCAL_LLM_MODEL,
             "url": LOCAL_LLM_URL,
             "http_status": ls,
             "note": ln,
-            "enabled_when": "OmniRoute 网关整体不可达（连接失败/超时）时自动启用；OMNIROUTE_ENABLED=false 时作为主模型",
+            "enabled_when": "普通聊天与文件生成的主用模型",
         },
-        "per_model": results,
+        "per_model": [{
+            "role": "local",
+            "model": LOCAL_LLM_MODEL,
+            "http_status": ls,
+            "reply": ln,
+            "actual": None,
+            "rate_limited": False,
+        }],
     })
 
 @app.route("/api/ark-test")
