@@ -402,6 +402,9 @@ ASR_MODEL_ID = os.environ.get("ARK_ASR_MODEL", "ep-m-20260723034312-t27x7")
 #   OMNIROUTE_COOLDOWN     触发限流后该模型的冷却秒数，默认 60
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "omniroute").lower()
 OMNIROUTE_URL = os.environ.get("OMNIROUTE_URL", "http://127.0.0.1:20128/v1/chat/completions")
+# OmniRoute 总开关：设为 false/0/no/off 可完全禁用 OmniRoute，聊天与文件生成直接走本地 qwen3:4b 兜底。
+# 默认开启（true）。禁用后行为与「OmniRoute 网关整体不可达」一致，但无需等待连接超时。
+OMNIROUTE_ENABLED = os.environ.get("OMNIROUTE_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")
 OMNIROUTE_KEY = os.environ.get("OMNIROUTE_KEY", "CHANGEME")
 OMNIROUTE_COOLDOWN = int(os.environ.get("OMNIROUTE_COOLDOWN", "60"))
 # 普通聊天固定模型（稳定优先）
@@ -1271,6 +1274,20 @@ def api_chat():
             # 1) 是否「生成文件/代码」请求？是则用强模型链逐个试，直到产出 <<<FILE:
             last_user = _last_user_text(messages)
             if _is_file_gen_request(last_user):
+                if not OMNIROUTE_ENABLED:
+                    # OmniRoute 已禁用：直接走本地 qwen3:4b 兜底（同样要求真落盘才算）
+                    lf, la, lok = _call_local_buffered(messages)
+                    if lok:
+                        clean, gen_files = extract_and_save_files(lf, username)
+                        if gen_files:
+                            yield from _postprocess(clean, la, f"Local({LOCAL_LLM_MODEL})", True, False, username, conversation_id, messages, pre_files=gen_files)
+                        else:
+                            if clean:
+                                yield f"data:{json.dumps({'text': clean}, ensure_ascii=False)}\n\n"
+                            yield from _postprocess(clean, la, f"Local({LOCAL_LLM_MODEL})", True, False, username, conversation_id, messages, pre_files=[])
+                        return
+                    yield f"data:{json.dumps({'error': f'本地兜底({LOCAL_LLM_MODEL} @ {LOCAL_LLM_URL}) 失败。OmniRoute 已禁用，请检查本地 Ollama(11434) 是否运行。'}, ensure_ascii=False)}\n\n"
+                    return
                 ft, gen_files, fa, fn, omni_dead = _try_file_models(messages, username)
                 if ft is not None:
                     fell_back = bool(OMNIROUTE_FILE_MODELS) and fn != OMNIROUTE_FILE_MODELS[0]
@@ -1283,6 +1300,10 @@ def api_chat():
             llm_label = f"OmniRoute({llm_model})"
             candidates = [llm_model]
             omni_unreachable = False  # OmniRoute 网关整体连不上（连接/超时）时置 True，触发本地兜底
+            if not OMNIROUTE_ENABLED:
+                # OmniRoute 已禁用：跳过候选，直接进入本地 qwen3:4b 兜底分支
+                omni_unreachable = True
+                candidates = []
 
         payload = {
             "model": llm_model,
@@ -1495,28 +1516,34 @@ def api_llm_test():
     依次测普通模型 + 每个文件模型，并探测本地兜底（OmniRoute 整体不可达时启用）。
     深度思考走 ARK 见 /api/ark-test。"""
     results = []
-    # 1) 普通聊天模型
-    nm = OMNIROUTE_MODEL
-    cd = _cooldown_sleep_needed(nm)
-    if cd > 0:
-        time.sleep(cd)
-    nm_status, nm_reply, nm_actual = _quick_test_model(nm)
-    results.append({"role": "normal", "model": nm, "http_status": nm_status, "reply": nm_reply,
-                   "actual": nm_actual,
-                   "rate_limited": nm_status in (403, 429) or (isinstance(nm_status, int) and nm_status >= 500)})
-    # 2) 文件生成链
-    for fm in OMNIROUTE_FILE_MODELS:
-        cdf = _cooldown_sleep_needed(fm)
-        if cdf > 0:
-            time.sleep(cdf)
-        st, rep, act = _quick_test_model(fm)
-        results.append({"role": "file", "model": fm, "http_status": st, "reply": rep,
-                       "actual": act,
-                       "rate_limited": st in (403, 429) or (isinstance(st, int) and st >= 500)})
-    # 3) 本地兜底探测
+    if not OMNIROUTE_ENABLED:
+        results.append({"role": "omni", "model": "(disabled)", "http_status": "skipped",
+                       "reply": "OmniRoute 已禁用（OMNIROUTE_ENABLED=false），聊天与文件生成直接走本地 qwen3:4b 兜底。",
+                       "actual": None, "rate_limited": False})
+    else:
+        # 1) 普通聊天模型
+        nm = OMNIROUTE_MODEL
+        cd = _cooldown_sleep_needed(nm)
+        if cd > 0:
+            time.sleep(cd)
+        nm_status, nm_reply, nm_actual = _quick_test_model(nm)
+        results.append({"role": "normal", "model": nm, "http_status": nm_status, "reply": nm_reply,
+                       "actual": nm_actual,
+                       "rate_limited": nm_status in (403, 429) or (isinstance(nm_status, int) and nm_status >= 500)})
+        # 2) 文件生成链
+        for fm in OMNIROUTE_FILE_MODELS:
+            cdf = _cooldown_sleep_needed(fm)
+            if cdf > 0:
+                time.sleep(cdf)
+            st, rep, act = _quick_test_model(fm)
+            results.append({"role": "file", "model": fm, "http_status": st, "reply": rep,
+                           "actual": act,
+                           "rate_limited": st in (403, 429) or (isinstance(st, int) and st >= 500)})
+    # 3) 本地兜底探测（禁用 OmniRoute 时它正是主用模型，无论如何都探测）
     ls, ln = _quick_test_local()
     return jsonify({
         "provider": "omniroute",
+        "omni_enabled": OMNIROUTE_ENABLED,
         "normal_model": OMNIROUTE_MODEL,
         "file_models": OMNIROUTE_FILE_MODELS,
         "cooldown_seconds": OMNIROUTE_COOLDOWN,
@@ -1525,7 +1552,7 @@ def api_llm_test():
             "url": LOCAL_LLM_URL,
             "http_status": ls,
             "note": ln,
-            "enabled_when": "OmniRoute 网关整体不可达（连接失败/超时）时自动启用",
+            "enabled_when": "OmniRoute 网关整体不可达（连接失败/超时）时自动启用；OMNIROUTE_ENABLED=false 时作为主模型",
         },
         "per_model": results,
     })
