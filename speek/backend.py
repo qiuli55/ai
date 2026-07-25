@@ -399,10 +399,44 @@ _FILE_GEN_TRIGGERS = [
     "生成一份", "写一份", "创建一份", "写个", "写一个", "做一个",
     "帮我写", "帮我生成", "帮我创建", "帮我做个",
     "生成代码", "写代码", "创建脚本", "写脚本", "源码", "代码文件", "脚本文件",
+    "txt文件", "文本文件", "md文件", "csv文件", "json文件", "html文件",
+    "xml文件", "yaml文件", "yml文件", "toml文件", "ini文件", "conf文件", "sql文件",
+    "生成文档", "写文档", "做个文档",
     "<<<file:",
 ]
 _FILE_EXT_RE = re.compile(
     r"\.(?:py|js|jsx|ts|tsx|html?|css|json|csv|xml|md|txt|sh|bash|java|cpp|c|cc|go|rs|vue|sql|yml|yaml|toml|ini|cfg|conf)\b",
+    re.I,
+)
+# 不带点的扩展名关键词（如「py文件」「python代码」「txt文件」「写go」）→ 映射到扩展名。
+# 关键词后须跟 文件/代码/脚本/程序/文档 或 标点/空白/行尾，避免误吞普通词（good→go、typescript→ts 等）。
+_FILE_KW_EXT = {
+    "python": ".py", "py": ".py",
+    "cpp": ".cpp", "c++": ".cpp", "c": ".c",
+    "markdown": ".md", "md": ".md",
+    "javascript": ".js", "js": ".js",
+    "typescript": ".ts", "ts": ".ts",
+    "htm": ".html", "html": ".html",
+    "css": ".css",
+    "yaml": ".yaml", "yml": ".yaml",
+    "toml": ".toml",
+    "ini": ".ini", "cfg": ".ini", "conf": ".conf",
+    "json": ".json",
+    "csv": ".csv",
+    "xml": ".xml",
+    "txt": ".txt", "文本": ".txt",
+    "sql": ".sql",
+    "java": ".java",
+    "go": ".go",
+    "rust": ".rs", "rs": ".rs",
+    "vue": ".vue",
+    "bash": ".sh", "shell": ".sh", "sh": ".sh",
+    "lua": ".lua",
+    "php": ".php",
+}
+_FILE_KW_EXT_RE = re.compile(
+    r"(python|cpp|c\+\+|markdown|javascript|typescript|lua|php|htm|html|css|yaml|yml|toml|json|csv|xml|txt|文本|sql|java|go|rust|vue|bash|shell|py|md|js|ts|ini|cfg|conf|rs|sh|c)"
+    r"(?:\s*(?:代码|文件|脚本|程序|文档)|[\s，。、,.;；！!?？:：]|$)",
     re.I,
 )
 
@@ -493,16 +527,92 @@ def _call_local_buffered(messages):
     return cleaned, actual, bool(cleaned)
 
 
+def _strip_code_fence(text):
+    """去掉模型偶发包裹的 ```lang ... ``` 代码围栏，保留内部内容（兜底落盘用）。"""
+    if not text:
+        return text
+    s = text.strip()
+    m = re.match(r"^\s*```[^\n]*\n(.*?)\n```\s*$", s, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    if s.startswith("```"):
+        s = re.sub(r"^\s*```[^\n]*\n", "", s)
+        s = re.sub(r"\n```\s*$", "", s)
+        return s.strip()
+    return text
+
+
+def _infer_file_target(user_text):
+    """从用户请求推断落盘文件名与扩展名，返回 (base_name, ext_with_dot)。"""
+    ext = ".txt"
+    m = _FILE_EXT_RE.search(user_text or "")
+    if m:
+        ext = "." + m.group(0).lstrip(".").lower()
+    else:
+        km = _FILE_KW_EXT_RE.search(user_text or "")
+        if km:
+            ext = _FILE_KW_EXT.get(km.group(1).lower(), ".txt")
+    name = "生成的文件"
+    nm = re.search(r"(?:叫|名为?|名称[是为]?|文件名[是为]?)\s*([\w\u4e00-\u9fff][\w\u4e00-\u9fff.\-]{0,40})", user_text or "")
+    if nm:
+        cand = nm.group(1).strip()
+        if "." in cand and not cand.startswith("."):
+            base, cext = os.path.splitext(cand)
+            if cext:
+                name, ext = base, cext.lower()
+            else:
+                name = cand
+        else:
+            name = cand
+    return name, ext
+
+
+def _save_one_file(name, ext, content, username):
+    """按安全规则落盘单个文件，返回文件 dict 或 None（被护栏拒绝时）。"""
+    if not content or not content.strip():
+        return None
+    if len(content.encode("utf-8")) > MAX_GEN_FILE_BYTES:
+        print("【AI 文件】兜底内容超过大小上限，已忽略")
+        return None
+    _base = re.sub(r'[^A-Za-z0-9_.\-\u4e00-\u9fff\u3400-\u4dbf]', '_', name) or "file"
+    _base = _base.replace("..", "_")
+    if not _base.lower().endswith(ext):
+        _base = _base + ext
+    if os.path.splitext(_base)[1].lower() not in ALLOWED_GEN_EXT:
+        print("【AI 文件】兜底扩展名不在白名单，已忽略：", _base)
+        return None
+    _stored = f"{uuid.uuid4().hex}_{safe_name(username)}{ext}"
+    _path = os.path.join(GENFILES_DIR, _stored)
+    try:
+        with open(_path, "w", encoding="utf-8") as _f:
+            _f.write(content)
+    except Exception as e:
+        print("【AI 文件保存失败】", repr(e))
+        return None
+    return {"name": _base, "url": f"/genfiles/{_stored}", "type": "text/plain", "size": os.path.getsize(_path)}
+
+
 def _try_file_models(messages, username):
-    """文件生成：直接走本地 Ollama（LOCAL_LLM_MODEL），返回首个「真正落盘成功」的
-    (clean_text, gen_files, actual_model, model_name, fell_back)。
-      fell_back 恒为 False（本地即主用，无回退）。
-    只有 extract_and_save_files 实际解析出文件才算命中（避免模型只甩个格式示例 / 危险后缀被拦截时误判为已生成）。"""
+    """文件生成：直接走本地 Ollama（LOCAL_LLM_MODEL）。
+    返回 (clean_text, gen_files, actual_model, model_name, fell_back)，fell_back 恒为 False。
+    1) 优先解析严格 <<<FILE:>>> 格式（extract_and_save_files，含扩展名白名单/大小/防穿越护栏）。
+    2) 兜底：用户明确要文件但 4B 小模型没按格式输出（格式遵循偶发不稳）→
+       把模型正文当作该文件保存（扩展名取用户请求中的 .txt/.py 等，默认 .txt），
+       保证「生成 txt 文件」这类诉求真能拿到可下载文件。"""
     lf, la, lok = _call_local_buffered(messages)
-    if lok:
-        clean, gen_files = extract_and_save_files(lf, username)
-        if gen_files:
-            return clean, gen_files, (la or LOCAL_LLM_MODEL), f"Local({LOCAL_LLM_MODEL})", False
+    if not lok:
+        return None, None, None, None, False
+    # 1) 严格格式
+    clean, gen_files = extract_and_save_files(lf, username)
+    if gen_files:
+        return clean, gen_files, (la or LOCAL_LLM_MODEL), f"Local({LOCAL_LLM_MODEL})", False
+    # 2) 兜底：用户请求了文件但未输出标记 → 把正文存成请求指定的扩展名
+    last_user = _last_user_text(messages)
+    fb_name, fb_ext = _infer_file_target(last_user)
+    content = _strip_code_fence(lf)
+    saved = _save_one_file(fb_name, fb_ext, content, username)
+    if saved:
+        return "", [saved], (la or LOCAL_LLM_MODEL), f"Local({LOCAL_LLM_MODEL})", False
     return None, None, None, None, False
 
 def _postprocess(full, actual_model, used_label, fell_back, deep_think, username, conversation_id, messages, pre_files=None):
@@ -683,6 +793,7 @@ def extract_and_save_files(text, username):
         if not _name:
             continue
         # 取 basename 防目录穿越；保留中文与基本符号，其余替换为 _
+        _name = _name.strip().strip('"').strip("'").strip()
         _base = os.path.basename(_name)
         _base = re.sub(r'[^A-Za-z0-9_.\-\u4e00-\u9fff\u3400-\u4dbf]', '_', _base) or "file"
         _base = _base.replace("..", "_")
@@ -693,7 +804,7 @@ def extract_and_save_files(text, username):
         if len(_content.encode("utf-8")) > MAX_GEN_FILE_BYTES:
             print("【AI 文件】内容超过大小上限，已忽略：", _base)
             continue
-        _stored = f"{uuid.uuid4().hex}_{safe_name(username)}_{_base}"
+        _stored = f"{uuid.uuid4().hex}_{safe_name(username)}{_ext}"
         _path = os.path.join(GENFILES_DIR, _stored)
         try:
             with open(_path, "w", encoding="utf-8") as _f:
