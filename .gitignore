@@ -65,3 +65,9 @@ models_list.json
 ollama_detail.json
 or_cookie.txt
 providers.json
+omni_models_latest.json
+omni_models_v2.json
+omni_free_models.md
+# Test/probe scripts + raw outputs in workspace root
+test_file_models*.py
+test_file_models*.json

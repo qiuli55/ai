@@ -392,13 +392,61 @@ ASR_MODEL_ID = os.environ.get("ARK_ASR_MODEL", "ep-m-20260723034312-t27x7")
 # （GPT/Claude 同款，走网关 + 龙猫云节点 7892 出口）；深度思考单独走 ARK（能力强、稳定）。
 # 网关模型名带前缀：pollinations/openai（免费云端）、ollama-local/qwen3:8b（本地，想走本地改 OMNIROUTE_MODEL）。
 # 环境变量覆盖：
-#   OMNIROUTE_URL    网关地址（默认 http://127.0.0.1:20128/v1/chat/completions）
-#   OMNIROUTE_KEY    网关密钥（默认 CHANGEME，与 OmniRoute 后台一致）
-#   OMNIROUTE_MODEL  普通聊天默认模型（默认 pollinations/openai；想走本地改 ollama-local/qwen3:8b）
+#   OMNIROUTE_URL     网关地址（默认 http://127.0.0.1:20128/v1/chat/completions）
+#   OMNIROUTE_KEY     网关密钥（默认 CHANGEME，与 OmniRoute 后台一致）
+#   OMNIROUTE_MODEL   普通聊天默认模型（单值；与 OMNIROUTE_MODELS 二选一）
+#   OMNIROUTE_MODELS  普通聊天 fallback 链（逗号分隔，按顺序重试；末尾兜底建议放稳的如 opencode-zen/big-pickle）
+#   OMNIROUTE_COOLDOWN  触发限流（403/429 insufficient_quota 等）后该模型的冷却秒数，默认 60
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "omniroute").lower()
 OMNIROUTE_URL = os.environ.get("OMNIROUTE_URL", "http://127.0.0.1:20128/v1/chat/completions")
 OMNIROUTE_KEY = os.environ.get("OMNIROUTE_KEY", "CHANGEME")
-OMNIROUTE_MODEL = os.environ.get("OMNIROUTE_MODEL", "auto/best-coding")
+OMNIROUTE_COOLDOWN = int(os.environ.get("OMNIROUTE_COOLDOWN", "60"))
+# 优先级：OMNIROUTE_MODELS（多值 fallback 链）> OMNIROUTE_MODEL（单值兼容）> 内置兜底
+_models_env = os.environ.get("OMNIROUTE_MODELS", "").strip()
+if _models_env:
+    OMNIROUTE_MODELS = [m.strip() for m in _models_env.split(",") if m.strip()]
+elif os.environ.get("OMNIROUTE_MODEL"):
+    OMNIROUTE_MODELS = [os.environ.get("OMNIROUTE_MODEL").strip()]
+else:
+    OMNIROUTE_MODELS = ["auto/best-coding"]
+# 兼容旧代码
+OMNIROUTE_MODEL = OMNIROUTE_MODELS[0]
+
+# 模型级限流冷却表：{model_name: cooldown_until_timestamp}。命中 403/429/insufficient_quota 即写入。
+_omni_cooldown_until = {}  # type: dict[str, float]
+
+def _is_rate_limited_error(status_code: int, body_text: str) -> bool:
+    """判断响应是否限流/欠费——这类错误应立即切下一个模型而不是重试同一模型。"""
+    if status_code in (403, 429):
+        return True
+    if status_code >= 500:
+        return True
+    if not body_text:
+        return False
+    low = body_text.lower()
+    return any(k in low for k in ("insufficient_quota", "rate_limit", "rate limit",
+                                  "quota_exceeded", "too many requests", "empty response",
+                                  "bad_gateway"))
+
+def _pick_omni_model() -> str | None:
+    """按顺序挑第一个不在冷却期的模型；全在冷却期则等最短那个到期再返回它。返回 None 表示链路为空。"""
+    import time as _t
+    now = _t.time()
+    for m in OMNIROUTE_MODELS:
+        if _omni_cooldown_until.get(m, 0) <= now:
+            return m
+    # 全部冷却 → 选最快到期的
+    soonest = min(OMNIROUTE_MODELS, key=lambda m: _omni_cooldown_until.get(m, 0))
+    return soonest  # 调用方拿到后应 sleep 到期
+
+def _mark_rate_limited(model: str):
+    import time as _t
+    _omni_cooldown_until[model] = _t.time() + OMNIROUTE_COOLDOWN
+
+def _cooldown_sleep_needed(model: str) -> float:
+    """返回还需等多少秒该模型才解冻（≤0 表示可立即用）。"""
+    import time as _t
+    return max(0.0, _omni_cooldown_until.get(model, 0) - _t.time())
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 全局请求体上限 25MB
@@ -957,7 +1005,7 @@ def api_chat():
         messages.append({"role": "assistant", "content": item[1]})
     messages.append({"role": "user", "content": user_msg})
     def generate():
-        # 路由：深度思考走火山 ARK；普通聊天走本地 OmniRoute 网关（默认 Pollinations 免费模型）
+        # 路由：深度思考走火山 ARK；普通聊天走本地 OmniRoute 网关，按 OMNIROUTE_MODELS 顺序 fallback
         if deep_think:
             if not ARK_CONFIGURED:
                 yield f"data:{json.dumps({'error': '后端未配置 ARK_API_KEY：请在 backend.py 第189行改为真实密钥，或设置环境变量 ARK_API_KEY 后重启后端。'}, ensure_ascii=False)}\n\n"
@@ -972,7 +1020,6 @@ def api_chat():
             llm_model = OMNIROUTE_MODEL
             llm_label = f"OmniRoute({llm_model})"
 
-        actual_model = None  # 上游首包回传的真实模型名（如 big-pickle / doubao-...）
         payload = {
             "model": llm_model,
             "messages": messages,
@@ -985,53 +1032,109 @@ def api_chat():
             "Content-Type": "application/json",
         }
 
-        try:
-            r = requests.post(llm_url, json=payload, headers=headers, stream=True, timeout=300)
-        except Exception as e:
-            yield f"data:{json.dumps({'error': f'{llm_label} 请求异常：{e}'}, ensure_ascii=False)}\n\n"
-            return
-
-        if r.status_code != 200:
-            err_body = r.text[:400].replace("\n", " ")
-            yield f"data:{json.dumps({'error': f'{llm_label} 返回错误（HTTP {r.status_code}）：{err_body}'}, ensure_ascii=False)}\n\n"
-            return
-
+        # ---- 流式调用（深度思考单模型；普通聊天按 OMNIROUTE_MODELS 链 fallback）----
+        actual_model = None
         full = ""
-        try:
-            for line in r.iter_lines():
-                if not line:
+        last_err = ""
+        used_label = llm_label
+        # 候选模型列表（深度思考只有 1 个；普通聊天按 fallback 链）
+        if deep_think:
+            candidates = [llm_model]
+        else:
+            candidates = OMNIROUTE_MODELS[:]
+        for idx, model_name in enumerate(candidates):
+            used_label = f"OmniRoute({model_name})" if not deep_think else f"ARK({model_name})"
+            # 若该模型仍在限流冷却期，跳到下一个（但若是链中最后一个则等待）
+            wait_s = _cooldown_sleep_needed(model_name)
+            if wait_s > 0 and idx < len(candidates) - 1:
+                continue
+            if wait_s > 0 and idx == len(candidates) - 1:
+                # 全链冷却中：等最短那个到期
+                time.sleep(wait_s)
+            payload["model"] = model_name
+            try:
+                r = requests.post(llm_url, json=payload, headers=headers, stream=True, timeout=300)
+            except Exception as e:
+                last_err = f"{used_label} 请求异常：{e}"
+                continue
+            if r.status_code != 200:
+                err_body = r.text[:400].replace("\n", " ")
+                if _is_rate_limited_error(r.status_code, err_body):
+                    _mark_rate_limited(model_name)
+                    last_err = f"{used_label} 限流（HTTP {r.status_code}），{OMNIROUTE_COOLDOWN}s 后重试"
                     continue
-                text = line.decode("utf-8", errors="replace")
-                if not text.startswith("data:"):
-                    continue
-                if "[DONE]" in text:
-                    break
-                raw = text[len("data:"):].strip()
-                if not raw:
-                    continue
-                try:
-                    obj = json.loads(raw)
-                except Exception as e:
-                    yield f"data:{json.dumps({'error': f'{llm_label} 返回无法解析的数据：{e}；原文前200字：{raw[:200]}'}, ensure_ascii=False)}\n\n"
+                # 非限流错误：直接返回（不切下一个，避免静默换模型掩盖问题）
+                yield f"data:{json.dumps({'error': f'{used_label} 返回错误（HTTP {r.status_code}）：{err_body}'}, ensure_ascii=False)}\n\n"
+                return
+            # 200：进入流式读取
+            got_any_token = False
+            stream_ok = True
+            try:
+                for line in r.iter_lines():
+                    if not line:
+                        continue
+                    text = line.decode("utf-8", errors="replace")
+                    if not text.startswith("data:"):
+                        continue
+                    if "[DONE]" in text:
+                        break
+                    raw = text[len("data:"):].strip()
+                    if not raw:
+                        continue
+                    try:
+                        obj = json.loads(raw)
+                    except Exception as e:
+                        yield f"data:{json.dumps({'error': f'{used_label} 返回无法解析的数据：{e}；原文前200字：{raw[:200]}'}, ensure_ascii=False)}\n\n"
+                        stream_ok = False
+                        break
+                    if actual_model is None and obj.get("model"):
+                        actual_model = obj["model"]
+                    if obj.get("error"):
+                        err = obj["error"]
+                        msg = err.get("message") if isinstance(err, dict) else str(err)
+                        # 流中途的 error 视为限流
+                        if _is_rate_limited_error(200, msg):
+                            _mark_rate_limited(model_name)
+                            last_err = f"{used_label} 流中限流：{msg[:120]}"
+                            stream_ok = False
+                            break
+                        yield f"data:{json.dumps({'error': f'{used_label} 返回错误：{msg}'}, ensure_ascii=False)}\n\n"
+                        stream_ok = False
+                        break
+                    try:
+                        token = obj["choices"][0]["delta"].get("content", "")
+                    except Exception as e:
+                        yield f"data:{json.dumps({'error': f'{used_label} 返回结构异常：{e}；原文前200字：{raw[:200]}'}, ensure_ascii=False)}\n\n"
+                        stream_ok = False
+                        break
+                    if token:
+                        got_any_token = True
+                        full += token
+                        yield f"data:{json.dumps({'text': token}, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                yield f"data:{json.dumps({'error': f'{used_label} 流读取异常：{e}'}, ensure_ascii=False)}\n\n"
+                stream_ok = False
+            if not stream_ok:
+                # 已 yield error 或被限流切走；如已拿到部分 token 也直接终止（用户能看到已生成内容）
+                if got_any_token:
+                    # 已有部分输出，补一个 done 标记
                     return
-                if actual_model is None and obj.get("model"):
-                    actual_model = obj["model"]
-                if obj.get("error"):
-                    err = obj["error"]
-                    msg = err.get("message") if isinstance(err, dict) else str(err)
-                    yield f"data:{json.dumps({'error': f'{llm_label} 返回错误：{msg}'}, ensure_ascii=False)}\n\n"
-                    return
-                try:
-                    token = obj["choices"][0]["delta"].get("content", "")
-                except Exception as e:
-                    yield f"data:{json.dumps({'error': f'{llm_label} 返回结构异常：{e}；原文前200字：{raw[:200]}'}, ensure_ascii=False)}\n\n"
-                    return
-                if token:
-                    full += token
-                    yield f"data:{json.dumps({'text': token}, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            yield f"data:{json.dumps({'error': f'{llm_label} 流读取异常：{e}'}, ensure_ascii=False)}\n\n"
-            return
+                continue
+            # 流正常结束
+            if got_any_token:
+                break
+            # 200 但 0 token：可能上游"empty response"，视为限流切下一个
+            _mark_rate_limited(model_name)
+            last_err = f"{used_label} 200 但无任何 token（empty response），切下一个"
+            continue
+        else:
+            # 全部候选走完都没拿到 token
+            if full:
+                pass  # 前面 while 中已 break 不会到这里
+            else:
+                detail = last_err or "无可用模型"
+                yield f"data:{json.dumps({'error': f'所有 OmniRoute 模型都失败：{detail}。请稍候重试，或检查 OMNIROUTE_MODELS 配置。'}, ensure_ascii=False)}\n\n"
+                return
 
         # ---- 解析 AI 返回的文件（格式：<<<FILE:名.后缀>>>\n内容\n<<<END>>>）----
         full, gen_files = extract_and_save_files(full, username)
@@ -1095,32 +1198,62 @@ def api_chat():
 
 @app.route("/api/llm-test")
 def api_llm_test():
-    """诊断当前普通聊天后端（OmniRoute 网关），前端可调用查看实时状态。深度思考走 ARK 见 /api/ark-test。"""
-    test_payload = {
-        "model": OMNIROUTE_MODEL,
-        "messages": [{"role": "user", "content": "你好，请只回复两个字：在的"}],
-        "temperature": 0.5,
-        "max_tokens": 50,
-        "stream": False,
-    }
-    headers = {"Authorization": f"Bearer {OMNIROUTE_KEY}", "Content-Type": "application/json"}
-    try:
-        r = requests.post(OMNIROUTE_URL, json=test_payload, headers=headers, timeout=120)
-        body = r.text[:800]
+    """诊断当前普通聊天后端（OmniRoute 网关 fallback 链），前端可调用查看实时状态。深度思考走 ARK 见 /api/ark-test。
+    依次按 OMNIROUTE_MODELS 顺序测每个候选，跳过冷却期模型，最后一个兜底等待。"""
+    import time as _t
+    results = []
+    chosen = None
+    chosen_reply = ""
+    chosen_status = None
+    chosen_actual = None
+    cooldown_now = _t.time()
+    for idx, model_name in enumerate(OMNIROUTE_MODELS):
+        cd_until = _omni_cooldown_until.get(model_name, 0)
+        cd_left = max(0.0, cd_until - cooldown_now)
+        if cd_left > 0 and idx < len(OMNIROUTE_MODELS) - 1:
+            results.append({"model": model_name, "skipped_cooldown": round(cd_left, 1), "status": "SKIP"})
+            continue
+        if cd_left > 0 and idx == len(OMNIROUTE_MODELS) - 1:
+            time.sleep(cd_left)
+        test_payload = {
+            "model": model_name,
+            "messages": [{"role": "user", "content": "你好，请只回复两个字：在的"}],
+            "temperature": 0.5, "max_tokens": 50, "stream": False,
+        }
+        headers = {"Authorization": f"Bearer {OMNIROUTE_KEY}", "Content-Type": "application/json"}
         try:
-            obj = r.json()
-            content = obj.get("choices", [{}])[0].get("message", {}).get("content", "")
-        except Exception:
-            content = ""
-        return jsonify({
-            "provider": "omniroute",
-            "model": OMNIROUTE_MODEL,
-            "http_status": r.status_code,
-            "reply": content,
-            "raw": body,
-        })
-    except Exception as e:
-        return jsonify({"provider": "omniroute", "model": OMNIROUTE_MODEL, "http_status": None, "error": str(e)})
+            r = requests.post(OMNIROUTE_URL, json=test_payload, headers=headers, timeout=60)
+            body = r.text[:600]
+            try:
+                obj = r.json()
+                content = obj.get("choices", [{}])[0].get("message", {}).get("content", "")
+                actual = obj.get("model", "")
+            except Exception:
+                content = ""; actual = ""
+            entry = {"model": model_name, "status": r.status_code, "http_status": r.status_code, "reply": content, "actual": actual}
+            if _is_rate_limited_error(r.status_code, body):
+                _mark_rate_limited(model_name)
+                entry["rate_limited"] = True
+                entry["cooldown_set"] = OMNIROUTE_COOLDOWN
+            results.append(entry)
+            if r.status_code == 200 and content and chosen is None:
+                chosen = model_name
+                chosen_reply = content
+                chosen_status = r.status_code
+                chosen_actual = actual
+                break  # 找到一个能用的就返回
+        except Exception as e:
+            results.append({"model": model_name, "status": "EXC", "error": str(e)})
+    return jsonify({
+        "provider": "omniroute",
+        "fallback_chain": OMNIROUTE_MODELS,
+        "cooldown_seconds": OMNIROUTE_COOLDOWN,
+        "chosen": chosen,
+        "reply": chosen_reply,
+        "http_status": chosen_status,
+        "actual_model": chosen_actual,
+        "per_model": results,
+    })
 
 @app.route("/api/ark-test")
 def api_ark_test():
