@@ -388,29 +388,33 @@ ARK_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
 ASR_MODEL_ID = os.environ.get("ARK_ASR_MODEL", "ep-m-20260723034312-t27x7")
 
 # ---- LLM 路由：普通聊天走本地 OmniRoute 网关，深度思考走火山 ARK，不再直连 Ollama ----
-# OmniRoute 网关（OpenAI 兼容，监听 :20128）。普通聊天经此网关，默认用 Pollinations 免费模型
-# （GPT/Claude 同款，走网关 + 龙猫云节点 7892 出口）；深度思考单独走 ARK（能力强、稳定）。
-# 网关模型名带前缀：pollinations/openai（免费云端）、ollama-local/qwen3:8b（本地，想走本地改 OMNIROUTE_MODEL）。
+# OmniRoute 网关（OpenAI 兼容，监听 :20128）。普通聊天经此网关；深度思考单独走 ARK（能力强、稳定）。
+# 网关模型名带前缀：opencode-zen/big-pickle（OpenCode 内置免 key，最稳）、opencode/<model>-free 等。
+# 策略（2026-07-25 调整，用户要求）：
+#   · 平时对话固定用 OMNIROUTE_MODEL（big-pickle，稳定优先）
+#   · 用户要「生成文件/代码」时，按 OMNIROUTE_FILE_MODELS 顺序逐个试，首个产出 <<<FILE: 即用；
+#     都不产出则回退到 OMNIROUTE_MODEL。
 # 环境变量覆盖：
-#   OMNIROUTE_URL     网关地址（默认 http://127.0.0.1:20128/v1/chat/completions）
-#   OMNIROUTE_KEY     网关密钥（默认 CHANGEME，与 OmniRoute 后台一致）
-#   OMNIROUTE_MODEL   普通聊天默认模型（单值；与 OMNIROUTE_MODELS 二选一）
-#   OMNIROUTE_MODELS  普通聊天 fallback 链（逗号分隔，按顺序重试；末尾兜底建议放稳的如 opencode-zen/big-pickle）
-#   OMNIROUTE_COOLDOWN  触发限流（403/429 insufficient_quota 等）后该模型的冷却秒数，默认 60
+#   OMNIROUTE_URL          网关地址（默认 http://127.0.0.1:20128/v1/chat/completions）
+#   OMNIROUTE_KEY          网关密钥（默认 CHANGEME，与 OmniRoute 后台一致）
+#   OMNIROUTE_MODEL        普通聊天固定模型（默认 opencode-zen/big-pickle）
+#   OMNIROUTE_FILE_MODELS  文件生成时挨个试的强模型链（逗号分隔）
+#   OMNIROUTE_COOLDOWN     触发限流后该模型的冷却秒数，默认 60
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "omniroute").lower()
 OMNIROUTE_URL = os.environ.get("OMNIROUTE_URL", "http://127.0.0.1:20128/v1/chat/completions")
 OMNIROUTE_KEY = os.environ.get("OMNIROUTE_KEY", "CHANGEME")
 OMNIROUTE_COOLDOWN = int(os.environ.get("OMNIROUTE_COOLDOWN", "60"))
-# 优先级：OMNIROUTE_MODELS（多值 fallback 链）> OMNIROUTE_MODEL（单值兼容）> 内置兜底
-_models_env = os.environ.get("OMNIROUTE_MODELS", "").strip()
-if _models_env:
-    OMNIROUTE_MODELS = [m.strip() for m in _models_env.split(",") if m.strip()]
-elif os.environ.get("OMNIROUTE_MODEL"):
-    OMNIROUTE_MODELS = [os.environ.get("OMNIROUTE_MODEL").strip()]
+# 普通聊天固定模型（稳定优先）
+OMNIROUTE_MODEL = (os.environ.get("OMNIROUTE_MODEL") or "opencode-zen/big-pickle").strip() or "opencode-zen/big-pickle"
+# 文件生成时依次尝试的强模型链（首个产出 <<<FILE: 即用，都不产出则回退 OMNIROUTE_MODEL）
+_file_models_env = os.environ.get("OMNIROUTE_FILE_MODELS", "").strip()
+if _file_models_env:
+    OMNIROUTE_FILE_MODELS = [m.strip() for m in _file_models_env.split(",") if m.strip()]
 else:
-    OMNIROUTE_MODELS = ["auto/best-coding"]
-# 兼容旧代码
-OMNIROUTE_MODEL = OMNIROUTE_MODELS[0]
+    OMNIROUTE_FILE_MODELS = ["opencode/mimo-v2.5-free", "opencode/north-mini-code-free", "opencode/nemotron-3-ultra-free"]
+# 兼容旧字段（本策略不再使用，仅保留以兼容可能直接引用 OMNIROUTE_MODELS 的代码）
+_models_env = os.environ.get("OMNIROUTE_MODELS", "").strip()
+OMNIROUTE_MODELS = [m.strip() for m in _models_env.split(",") if m.strip()] if _models_env else [OMNIROUTE_MODEL]
 
 # 模型级限流冷却表：{model_name: cooldown_until_timestamp}。命中 403/429/insufficient_quota 即写入。
 _omni_cooldown_until = {}  # type: dict[str, float]
@@ -447,6 +451,161 @@ def _cooldown_sleep_needed(model: str) -> float:
     """返回还需等多少秒该模型才解冻（≤0 表示可立即用）。"""
     import time as _t
     return max(0.0, _omni_cooldown_until.get(model, 0) - _t.time())
+
+# ---- 「生成文件」意图识别 + 强模型逐个试，直到产出 <<<FILE: ----
+_FILE_GEN_TRIGGERS = [
+    "生成文件", "写文件", "创建文件", "输出文件", "输出一个文件", "导出文件", "给我一个文件",
+    "生成一份", "写一份", "创建一份", "写个", "写一个", "做一个",
+    "帮我写", "帮我生成", "帮我创建", "帮我做个",
+    "生成代码", "写代码", "创建脚本", "写脚本", "源码", "代码文件", "脚本文件",
+    "<<<file:",
+]
+_FILE_EXT_RE = re.compile(
+    r"\.(?:py|js|jsx|ts|tsx|html?|css|json|csv|xml|md|txt|sh|bash|java|cpp|c|cc|go|rs|vue|sql|yml|yaml|toml|ini|cfg|conf)\b",
+    re.I,
+)
+
+def _last_user_text(messages):
+    for m in reversed(messages):
+        if isinstance(m, dict) and m.get("role") == "user":
+            c = m.get("content", "")
+            return c if isinstance(c, str) else str(c)
+    return ""
+
+def _is_file_gen_request(text):
+    """判断用户是否要「生成可下载的文件 / 代码」。命中则返回 True。"""
+    if not isinstance(text, str) or not text.strip():
+        return False
+    if any(k in text for k in _FILE_GEN_TRIGGERS):
+        return True
+    if _FILE_EXT_RE.search(text):
+        return True
+    return False
+
+def _probe_omni_buffered(model_name, messages):
+    """缓冲式请求一个 OmniRoute 模型，完整拿到回复再返回（不立即流式发给前端）。
+    返回 (full_text, actual_model, ok)。ok=False 表示限流/错误（无有效内容）。"""
+    payload = {
+        "model": model_name,
+        "messages": messages,
+        "temperature": 0.8,
+        "max_tokens": 1024,
+        "stream": True,
+    }
+    headers = {"Authorization": f"Bearer {OMNIROUTE_KEY}", "Content-Type": "application/json"}
+    try:
+        r = requests.post(OMNIROUTE_URL, json=payload, headers=headers, stream=True, timeout=300)
+    except Exception:
+        return "", None, False
+    if r.status_code != 200:
+        err = r.text[:400].replace("\n", " ")
+        if _is_rate_limited_error(r.status_code, err):
+            _mark_rate_limited(model_name)
+        return "", None, False
+    full = ""
+    actual = None
+    try:
+        for line in r.iter_lines():
+            if not line:
+                continue
+            text = line.decode("utf-8", errors="replace")
+            if not text.startswith("data:"):
+                continue
+            if "[DONE]" in text:
+                break
+            raw = text[len("data:"):].strip()
+            if not raw:
+                continue
+            try:
+                obj = json.loads(raw)
+            except Exception:
+                return full, actual, bool(full)
+            if actual is None and obj.get("model"):
+                actual = obj["model"]
+            if obj.get("error"):
+                err = obj["error"]
+                msg = err.get("message") if isinstance(err, dict) else str(err)
+                if _is_rate_limited_error(200, msg):
+                    _mark_rate_limited(model_name)
+                return full, actual, bool(full)
+            try:
+                tok = obj["choices"][0]["delta"].get("content", "")
+            except Exception:
+                return full, actual, bool(full)
+            if tok:
+                full += tok
+        return full, actual, True
+    except Exception:
+        return full, actual, bool(full)
+
+def _try_file_models(messages, username):
+    """文件生成：依次用 OMNIROUTE_FILE_MODELS 缓冲请求，返回首个「真正落盘成功」的
+    (clean_text, gen_files, actual_model, model_name)；全失败返回 (None, None, None, None)。
+    只有 extract_and_save_files 实际解析出文件才算命中（避免模型只甩个格式示例 / 危险后缀被拦截时误判为已生成）。
+    命中的限流会写入冷却表。"""
+    for fm in OMNIROUTE_FILE_MODELS:
+        wait_s = _cooldown_sleep_needed(fm)
+        if wait_s > 0:
+            time.sleep(wait_s)
+        text, actual, ok = _probe_omni_buffered(fm, messages)
+        if not ok:
+            continue
+        # 必须真能落盘才算数（验证扩展名白名单 / 大小 / 格式完整）
+        clean, gen_files = extract_and_save_files(text, username)
+        if gen_files:
+            return clean, gen_files, (actual or fm), fm
+    return None, None, None, None
+
+def _postprocess(full, actual_model, used_label, fell_back, deep_think, username, conversation_id, messages, pre_files=None):
+    """统一后处理（生成器）：解析 AI 文件、推送 files 事件、model 路由标签、写入 ROUTING_HISTORY、触发画像增量学习。
+    pre_files 非空时跳过重新解析（文件已在 _try_file_models 中落盘）。"""
+    if pre_files is None:
+        full, gen_files = extract_and_save_files(full, username)
+    else:
+        gen_files = pre_files
+    if not full and not gen_files:
+        yield f"data:{json.dumps({'error': f'{used_label} 返回了空内容（HTTP 200 但无任何文本）。若走 OmniRoute 网关，请确认龙猫云节点已开（代理 127.0.0.1:7892 可达）；若走 ARK，请确认接入点与密钥状态。'}, ensure_ascii=False)}\n\n"
+        return
+    if gen_files:
+        yield f"data:{json.dumps({'type': 'files', 'text': full, 'files': gen_files}, ensure_ascii=False)}\n\n"
+    _routing_label = actual_model or used_label
+    try:
+        yield f"data:{json.dumps({'type': 'model', 'label': _routing_label, 'backend': 'ark' if deep_think else 'omniroute', 'fell_back': fell_back}, ensure_ascii=False)}\n\n"
+    except Exception:
+        pass
+    try:
+        _q = ""
+        if messages:
+            _c = messages[-1].get("content", "")
+            _q = (_c if isinstance(_c, str) else str(_c))[:60]
+        ROUTING_HISTORY.append({
+            "time": time.strftime("%H:%M:%S", time.localtime()),
+            "user": username,
+            "q": _q,
+            "backend": "ark" if deep_think else "omniroute",
+            "config_model": used_label,
+            "actual_model": actual_model or "(unknown)",
+            "label": _routing_label,
+        })
+        if len(ROUTING_HISTORY) > 200:
+            ROUTING_HISTORY[:] = ROUTING_HISTORY[-200:]
+    except Exception:
+        pass
+    try:
+        mem = load_user_memory(username)
+        if conversation_id:
+            conv = _find_conversation(mem, conversation_id)
+            if conv is not None:
+                p = ensure_persona(conv)["persona"]
+                total = count_pairs([conv])
+                if total - p.get("learned_turns", 0) >= PROFILE_THRESHOLD:
+                    threading.Thread(target=update_profile, args=(username, conversation_id), daemon=True).start()
+        else:
+            total = count_pairs(mem.get("conversations", []))
+            if total - mem["profile"].get("learned_turns", 0) >= PROFILE_THRESHOLD:
+                threading.Thread(target=update_profile, args=(username,), daemon=True).start()
+    except Exception:
+        pass
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 全局请求体上限 25MB
@@ -1005,7 +1164,7 @@ def api_chat():
         messages.append({"role": "assistant", "content": item[1]})
     messages.append({"role": "user", "content": user_msg})
     def generate():
-        # 路由：深度思考走火山 ARK；普通聊天走本地 OmniRoute 网关，按 OMNIROUTE_MODELS 顺序 fallback
+        # 路由：深度思考走火山 ARK（单模型直通，不 fallback）；普通聊天走本地 OmniRoute 网关
         if deep_think:
             if not ARK_CONFIGURED:
                 yield f"data:{json.dumps({'error': '后端未配置 ARK_API_KEY：请在 backend.py 第189行改为真实密钥，或设置环境变量 ARK_API_KEY 后重启后端。'}, ensure_ascii=False)}\n\n"
@@ -1014,11 +1173,22 @@ def api_chat():
             llm_key = ARK_API_KEY
             llm_model = CHAT_MODEL_ID
             llm_label = "ARK(深度思考)"
+            candidates = [llm_model]
         else:
+            # 1) 是否「生成文件/代码」请求？是则用强模型链逐个试，直到产出 <<<FILE:
+            last_user = _last_user_text(messages)
+            if _is_file_gen_request(last_user):
+                ft, gen_files, fa, fn = _try_file_models(messages, username)
+                if ft is not None:
+                    fell_back = bool(OMNIROUTE_FILE_MODELS) and fn != OMNIROUTE_FILE_MODELS[0]
+                    yield from _postprocess(ft, fa, fn or OMNIROUTE_MODEL, fell_back, False, username, conversation_id, messages, pre_files=gen_files)
+                    return
+            # 2) 普通聊天：固定用 OMNIROUTE_MODEL（big-pickle），稳定优先
             llm_url = OMNIROUTE_URL
             llm_key = OMNIROUTE_KEY
             llm_model = OMNIROUTE_MODEL
             llm_label = f"OmniRoute({llm_model})"
+            candidates = [llm_model]
 
         payload = {
             "model": llm_model,
@@ -1032,16 +1202,11 @@ def api_chat():
             "Content-Type": "application/json",
         }
 
-        # ---- 流式调用（深度思考单模型；普通聊天按 OMNIROUTE_MODELS 链 fallback）----
+        # ---- 流式调用（普通聊天固定单模型；深度思考单模型）----
         actual_model = None
         full = ""
         last_err = ""
         used_label = llm_label
-        # 候选模型列表（深度思考只有 1 个；普通聊天按 fallback 链）
-        if deep_think:
-            candidates = [llm_model]
-        else:
-            candidates = OMNIROUTE_MODELS[:]
         for idx, model_name in enumerate(candidates):
             used_label = f"OmniRoute({model_name})" if not deep_think else f"ARK({model_name})"
             # 若该模型仍在限流冷却期，跳到下一个（但若是链中最后一个则等待）
@@ -1136,58 +1301,8 @@ def api_chat():
                 yield f"data:{json.dumps({'error': f'所有 OmniRoute 模型都失败：{detail}。请稍候重试，或检查 OMNIROUTE_MODELS 配置。'}, ensure_ascii=False)}\n\n"
                 return
 
-        # ---- 解析 AI 返回的文件（格式：<<<FILE:名.后缀>>>\n内容\n<<<END>>>）----
-        full, gen_files = extract_and_save_files(full, username)
-
-        if not full and not gen_files:
-            yield f"data:{json.dumps({'error': f'{llm_label} 返回了空内容（HTTP 200 但无任何文本）。若走 OmniRoute 网关，请确认龙猫云节点已开（代理 127.0.0.1:7892 可达）；若走 ARK，请确认接入点与密钥状态。'}, ensure_ascii=False)}\n\n"
-            return
-
-        # 若本次回复包含 AI 生成的文件，末尾补发一个 files 事件，前端据此渲染文件卡片
-        if gen_files:
-            yield f"data:{json.dumps({'type': 'files', 'text': full, 'files': gen_files}, ensure_ascii=False)}\n\n"
-
-        # ---- 路由记录：把本次回答实际走的模型/后端推给前端 model-tag，并记入 ROUTING_HISTORY ----
-        _routing_label = actual_model or llm_model
-        try:
-            yield f"data:{json.dumps({'type': 'model', 'label': _routing_label, 'backend': 'ark' if deep_think else 'omniroute', 'fell_back': False}, ensure_ascii=False)}\n\n"
-        except Exception:
-            pass
-        try:
-            _q = ""
-            if messages:
-                _c = messages[-1].get("content", "")
-                _q = (_c if isinstance(_c, str) else str(_c))[:60]
-            ROUTING_HISTORY.append({
-                "time": time.strftime("%H:%M:%S", time.localtime()),
-                "user": username,
-                "q": _q,
-                "backend": "ark" if deep_think else "omniroute",
-                "config_model": llm_model,
-                "actual_model": actual_model or "(unknown)",
-                "label": _routing_label,
-            })
-            if len(ROUTING_HISTORY) > 200:
-                ROUTING_HISTORY[:] = ROUTING_HISTORY[-200:]
-        except Exception:
-            pass
-
-        # 自动增量学习角色画像（按对话隔离，后台不阻塞本次回复）
-        try:
-            mem = load_user_memory(username)
-            if conversation_id:
-                conv = _find_conversation(mem, conversation_id)
-                if conv is not None:
-                    p = ensure_persona(conv)["persona"]
-                    total = count_pairs([conv])
-                    if total - p.get("learned_turns", 0) >= PROFILE_THRESHOLD:
-                        threading.Thread(target=update_profile, args=(username, conversation_id), daemon=True).start()
-            else:
-                total = count_pairs(mem.get("conversations", []))
-                if total - mem["profile"].get("learned_turns", 0) >= PROFILE_THRESHOLD:
-                    threading.Thread(target=update_profile, args=(username,), daemon=True).start()
-        except Exception:
-            pass
+        # ---- 统一后处理（解析文件 / 推送事件 / 路由标签 / 画像学习）----
+        yield from _postprocess(full, actual_model, used_label, False, deep_think, username, conversation_id, messages)
 
     return Response(
         generate(),
@@ -1196,62 +1311,84 @@ def api_chat():
     )
 
 
+def _quick_test_model(model_name):
+    """对单个 OmniRoute 模型做一次短流式探测，返回 (status, reply, actual)。
+    用 stream=True 累积（OmniRoute 对 stream=False 会返回 empty response）。"""
+    payload = {"model": model_name,
+               "messages": [{"role": "user", "content": "你好，请只回复两个字：在的"}],
+               "temperature": 0.5, "max_tokens": 50, "stream": True}
+    headers = {"Authorization": f"Bearer {OMNIROUTE_KEY}", "Content-Type": "application/json"}
+    try:
+        r = requests.post(OMNIROUTE_URL, json=payload, headers=headers, stream=True, timeout=60)
+    except Exception as e:
+        return None, "", str(e)[:120]
+    if r.status_code != 200:
+        if _is_rate_limited_error(r.status_code, r.text[:400]):
+            _mark_rate_limited(model_name)
+        return r.status_code, "", r.text[:200]
+    full = ""; actual = None
+    try:
+        for line in r.iter_lines():
+            if not line:
+                continue
+            t = line.decode("utf-8", errors="replace")
+            if not t.startswith("data:"):
+                continue
+            if "[DONE]" in t:
+                break
+            raw = t[len("data:"):].strip()
+            if not raw:
+                continue
+            try:
+                obj = json.loads(raw)
+            except Exception:
+                continue
+            if actual is None and obj.get("model"):
+                actual = obj["model"]
+            if obj.get("error"):
+                msg = obj["error"].get("message") if isinstance(obj["error"], dict) else str(obj["error"])
+                if _is_rate_limited_error(200, msg):
+                    _mark_rate_limited(model_name)
+                return 200, full, actual
+            try:
+                tok = obj["choices"][0]["delta"].get("content", "")
+            except Exception:
+                continue
+            if tok:
+                full += tok
+        return 200, full, actual
+    except Exception:
+        return 200, full, actual
+
 @app.route("/api/llm-test")
 def api_llm_test():
-    """诊断当前普通聊天后端（OmniRoute 网关 fallback 链），前端可调用查看实时状态。深度思考走 ARK 见 /api/ark-test。
-    依次按 OMNIROUTE_MODELS 顺序测每个候选，跳过冷却期模型，最后一个兜底等待。"""
-    import time as _t
+    """诊断当前普通聊天后端（OmniRoute 网关）。
+    普通聊天固定模型 = OMNIROUTE_MODEL（big-pickle）；文件生成链 = OMNIROUTE_FILE_MODELS。
+    依次测普通模型 + 每个文件模型，报告状态。深度思考走 ARK 见 /api/ark-test。"""
     results = []
-    chosen = None
-    chosen_reply = ""
-    chosen_status = None
-    chosen_actual = None
-    cooldown_now = _t.time()
-    for idx, model_name in enumerate(OMNIROUTE_MODELS):
-        cd_until = _omni_cooldown_until.get(model_name, 0)
-        cd_left = max(0.0, cd_until - cooldown_now)
-        if cd_left > 0 and idx < len(OMNIROUTE_MODELS) - 1:
-            results.append({"model": model_name, "skipped_cooldown": round(cd_left, 1), "status": "SKIP"})
-            continue
-        if cd_left > 0 and idx == len(OMNIROUTE_MODELS) - 1:
-            time.sleep(cd_left)
-        test_payload = {
-            "model": model_name,
-            "messages": [{"role": "user", "content": "你好，请只回复两个字：在的"}],
-            "temperature": 0.5, "max_tokens": 50, "stream": False,
-        }
-        headers = {"Authorization": f"Bearer {OMNIROUTE_KEY}", "Content-Type": "application/json"}
-        try:
-            r = requests.post(OMNIROUTE_URL, json=test_payload, headers=headers, timeout=60)
-            body = r.text[:600]
-            try:
-                obj = r.json()
-                content = obj.get("choices", [{}])[0].get("message", {}).get("content", "")
-                actual = obj.get("model", "")
-            except Exception:
-                content = ""; actual = ""
-            entry = {"model": model_name, "status": r.status_code, "http_status": r.status_code, "reply": content, "actual": actual}
-            if _is_rate_limited_error(r.status_code, body):
-                _mark_rate_limited(model_name)
-                entry["rate_limited"] = True
-                entry["cooldown_set"] = OMNIROUTE_COOLDOWN
-            results.append(entry)
-            if r.status_code == 200 and content and chosen is None:
-                chosen = model_name
-                chosen_reply = content
-                chosen_status = r.status_code
-                chosen_actual = actual
-                break  # 找到一个能用的就返回
-        except Exception as e:
-            results.append({"model": model_name, "status": "EXC", "error": str(e)})
+    # 1) 普通聊天模型
+    nm = OMNIROUTE_MODEL
+    cd = _cooldown_sleep_needed(nm)
+    if cd > 0:
+        time.sleep(cd)
+    nm_status, nm_reply, nm_actual = _quick_test_model(nm)
+    results.append({"role": "normal", "model": nm, "http_status": nm_status, "reply": nm_reply,
+                   "actual": nm_actual,
+                   "rate_limited": nm_status in (403, 429) or (isinstance(nm_status, int) and nm_status >= 500)})
+    # 2) 文件生成链
+    for fm in OMNIROUTE_FILE_MODELS:
+        cdf = _cooldown_sleep_needed(fm)
+        if cdf > 0:
+            time.sleep(cdf)
+        st, rep, act = _quick_test_model(fm)
+        results.append({"role": "file", "model": fm, "http_status": st, "reply": rep,
+                       "actual": act,
+                       "rate_limited": st in (403, 429) or (isinstance(st, int) and st >= 500)})
     return jsonify({
         "provider": "omniroute",
-        "fallback_chain": OMNIROUTE_MODELS,
+        "normal_model": OMNIROUTE_MODEL,
+        "file_models": OMNIROUTE_FILE_MODELS,
         "cooldown_seconds": OMNIROUTE_COOLDOWN,
-        "chosen": chosen,
-        "reply": chosen_reply,
-        "http_status": chosen_status,
-        "actual_model": chosen_actual,
         "per_model": results,
     })
 
