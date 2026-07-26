@@ -463,7 +463,7 @@ def _ollama_request(messages):
         "model": LOCAL_LLM_MODEL,
         "messages": messages,
         "temperature": 0.8,
-        "max_tokens": 1024,
+        "max_tokens": 6096,
         "stream": True,
     }
     try:
@@ -475,6 +475,7 @@ def _ollama_request(messages):
     if r.status_code != 200:
         return "", None, False
     full = ""
+    reasoning_full = ""
     actual = LOCAL_LLM_MODEL
     try:
         for line in r.iter_lines():
@@ -500,8 +501,18 @@ def _ollama_request(messages):
                 continue
             if tok:
                 full += tok
+            try:
+                # ARK 用 reasoning_content，Ollama qwen3 思考模式用 reasoning
+                rtok = obj["choices"][0]["delta"].get("reasoning_content", "") or obj["choices"][0]["delta"].get("reasoning", "")
+            except Exception:
+                continue
+            if rtok:
+                reasoning_full += rtok
     except Exception:
         pass
+    # 兜底：若 content 为空但 reasoning 有内容（qwen3 思考模式可能吃光 max_tokens），用 reasoning 当回复
+    if not full and reasoning_full:
+        full = reasoning_full
     return full, actual, bool(full)
 
 
