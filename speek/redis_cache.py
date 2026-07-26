@@ -43,7 +43,8 @@ def _connect():
                 host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB,
                 password=REDIS_PASSWORD,
                 socket_connect_timeout=1, socket_timeout=1,
-                decode_responses=True)
+                decode_responses=True,
+                protocol=2)  # RESP2 兼容 Redis 5.x (Windows 版)
             client.ping()
             _rclient = client
             _using_real = True
