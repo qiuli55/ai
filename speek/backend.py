@@ -11,6 +11,8 @@ import requests
 from flask import Flask, request, jsonify, send_from_directory, Response, redirect, abort
 import pymysql
 from pymysql.cursors import DictCursor
+from redis_cache import (get_user_memory_cache, cache_user_memory, invalidate_user,
+                         invalidate_conversation, init_redis, is_real_redis)
 
 # ---- 清除可能继承到的失效代理 ----
 # 后端只与 ARK(直连可达)、本机 Ollama/SoVITS 通信，不需要代理。
@@ -132,15 +134,24 @@ def _set_persona(username, persona, conversation_id=None):
             return
     save_user_profile(username, persona)
 
-# ---- 内存级记忆缓存（减少磁盘IO）----
-_memory_cache = {}  # username -> (timestamp, data)
+# ---- 内存级记忆缓存（L1）+ Redis 缓存（L2）----
+_memory_cache = {}  # username -> (timestamp, data)  L1 超快速内存缓存
 _MEMORY_CACHE_TTL = 2.0  # 秒
 
 def load_user_memory(username):
+    """加载用户记忆 — L1 内存缓存 → L2 Redis 缓存 → MySQL"""
     now = time.time()
+    # L1: 内存缓存（2秒内直接返回，避免同一次请求重复查询）
     cached = _memory_cache.get(username)
     if cached and (now - cached[0]) < _MEMORY_CACHE_TTL:
         return cached[1]
+
+    # L2: Redis 缓存（5分钟内有效，持久化跨请求）
+    from_redis = get_user_memory_cache(username)
+    if from_redis is not None:
+        _memory_cache[username] = (now, from_redis)
+        return from_redis
+
     data = _default_memory()
     uid = get_user_id(username)
     try:
@@ -200,6 +211,7 @@ def load_user_memory(username):
         for conv in data["conversations"]:
             ensure_persona(conv)
         _memory_cache[username] = (now, data)
+        cache_user_memory(username, data)  # L2 Redis 缓存写入
         return data
     except Exception as e:
         print("load_user_memory error:", e)
@@ -272,6 +284,7 @@ def save_user_memory(username, data):
         except Exception as e:
             print("save_user_memory error:", e)
     _memory_cache[username] = (time.time(), data)  # 更新缓存
+    invalidate_user(username)  # Redis 缓存失效，下次读取时重新加载
     return data
 
 def update_user_memory(username, patch):
@@ -294,6 +307,7 @@ def delete_user_memory(username):
     except Exception as e:
         print("delete_user_memory error:", e)
     _memory_cache.pop(username, None)
+    invalidate_user(username)  # 清除 Redis 缓存
 
 def load_user_profile(username):
     return load_user_memory(username)["profile"]
@@ -324,6 +338,7 @@ def save_user_profile(username, profile):
     except Exception as e:
         print("save_user_profile error:", e)
     _memory_cache.pop(username, None)
+    invalidate_user(username)  # 角色信息变更，Redis 缓存失效
 
 def count_pairs(conversations):
     n = 0
@@ -2033,4 +2048,6 @@ def clean_audio():
 threading.Thread(target=clean_audio, daemon=True).start()
 
 if __name__ == "__main__":
+    init_redis()
+    print(f"[启动] Redis 缓存: {'真实连接' if is_real_redis() else 'fakeredis 内存模式'}")
     app.run(host="0.0.0.0", port=7860, debug=False, threaded=True)
